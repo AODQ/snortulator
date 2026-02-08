@@ -34,7 +34,7 @@ namespace SnortFs {
 	struct ReplayFile { uint64_t handle; };
 
 	ReplayFile replayOpen(char const * const filepath);
-	void replayClose(ReplayFile const file);
+	void replayClose(ReplayFile & file);
 
 	uint64_t replayInstructionOffset(ReplayFile const file);
 	uint64_t replayInstructionCount(ReplayFile const file);
@@ -61,7 +61,7 @@ namespace SnortFs {
 		uint64_t const instructionOffset,
 		uint64_t const regionCount
 	);
-	void replayRecordClose(ReplayFileRecorder const recorder);
+	void replayRecordClose(ReplayFileRecorder & recorder);
 
 	struct MemoryRegionDiffRecord {
 		uint64_t byteOffset;
@@ -75,7 +75,7 @@ namespace SnortFs {
 	// The first frame should probably capture the entire memory region as
 	//   a single diff so that it's all populated with data
 	void replayRecord(
-		ReplayFileRecorder const recorder,
+		ReplayFileRecorder & recorder,
 		size_t const diffCount,
 		MemoryRegionDiffRecord const * diffs
 	);

@@ -1,6 +1,8 @@
 #pragma once
 
-#include <snort/snort.hpp>
+#include <snort-harness/snort-harness.h>
+
+#include <snort/snort.h>
 #include <snort-replay/fs.hpp>
 
 // below only for initialization
@@ -50,7 +52,5 @@ struct Device {
 	mutable bool isRecordingFirstFrame { true };
 	mutable SnortFs::ReplayFileRecorder recordingFile { 0 };
 };
-
-size_t dtByteCount(SnortDt const dt);
 
 } // namespace snort

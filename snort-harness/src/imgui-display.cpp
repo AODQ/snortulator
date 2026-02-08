@@ -66,7 +66,11 @@ void gui::displayMemory(snort::Device const & device) {
 	);
 	ImGui::Checkbox("pause", &device.paused);
 	if (device.isRecording) {
-		ImGui::Text("recording...");
+		if (ImGui::Button("Stop recording")) {
+			SnortFs::replayRecordClose(device.recordingFile);
+			device.isRecording = false;
+			printf("stopped recording\n");
+		}
 	}
 	else if (ImGui::Button("Record")) {
 		// TODO file picker
@@ -115,9 +119,6 @@ void gui::displayMemoryRegion(
 		device.frameHistory[device.frameHistory.size() - 1 - frameIndex]
 	);
 	for (auto & delta : frameHistory.memoryRegionDeltas[regionIndex]) {
-		printf("applying delta for region %zu, byte offset %zu, data size %zu\n",
-			regionIndex, delta.byteOffset, delta.deltaData.size()
-		);
 		for (size_t it = 0; it < delta.deltaData.size(); ++ it) {
 			regionData[delta.byteOffset + it] = delta.deltaData[it];
 		}

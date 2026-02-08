@@ -8,10 +8,15 @@ namespace {
 
 std::vector<snort::MemoryRegionDelta> storeFrameDelta(
 	snort::Device & device,
+	bool const recordToDevice,
 	SnortMemoryRegion const * memoryRegions,
 	size_t const regionIndex
 ) {
 	std::vector<snort::MemoryRegionDelta> delta;
+	// the recording delta is different since it supports forwarding data,
+	//   the local delta is for rolling back data
+	std::vector<SnortFs::MemoryRegionDiffRecord> recordDelta;
+	std::vector<std::vector<uint8_t>> recordDeltaData;
 	auto & regionInfo = device.currentMemoryRegion[regionIndex];
 	auto & referenceData = memoryRegions[regionIndex].data;
 	size_t startByteDiff = -1u;
@@ -38,6 +43,21 @@ std::vector<snort::MemoryRegionDelta> storeFrameDelta(
 					),
 				}
 			);
+			if (recordToDevice) {
+				recordDelta.emplace_back(
+					SnortFs::MemoryRegionDiffRecord {
+						.byteOffset = startByteDiff,
+						.byteCount = (byteIt - startByteDiff),
+						.data = {},
+					}
+				);
+				recordDeltaData.emplace_back(
+					std::vector<uint8_t>(
+						&referenceData[startByteDiff],
+						&referenceData[byteIt]
+					)
+				);
+			}
 			startByteDiff = -1u;
 		}
 		// if byte is different, and no previous diff seen, start diff
@@ -52,29 +72,22 @@ std::vector<snort::MemoryRegionDelta> storeFrameDelta(
 			SnortAssert(false && "unreachable");
 		}
 	}
+	if (recordToDevice) {
+		// store the data at end to avoid ptr movement from reallocs
+		for (size_t it = 0; it < recordDelta.size(); ++ it) {
+			recordDelta[it].data = recordDeltaData[it].data();
+		}
+		// record delta for current region and current instruction into file
+		SnortFs::replayRecord(
+			device.recordingFile,
+			recordDelta.size(),
+			recordDelta.data()
+		);
+	}
 	return delta;
 }
 
 } // namespace
-
-// --
-
-size_t snort::dtByteCount(SnortDt const dt) {
-	switch (dt) {
-		case kSnortDt_u8: return 1u;
-		case kSnortDt_u16: return 2u;
-		case kSnortDt_u32: return 4u;
-		case kSnortDt_u64: return 8u;
-		case kSnortDt_i8: return 1u;
-		case kSnortDt_i16: return 2u;
-		case kSnortDt_i32: return 4u;
-		case kSnortDt_i64: return 8u;
-		case kSnortDt_f32: return 4u;
-		case kSnortDt_r8: return 1u;
-		case kSnortDt_rgba8: return 4u;
-		default: return 1u;
-	}
-}
 
 // --
 
@@ -113,14 +126,14 @@ SnortDevice snort_deviceCreate(
 		snort::MemoryRegionInfo const regionInfo = {
 			.dataType = regionCi.dataType,
 			.byteCount = (
-				snort::dtByteCount(regionCi.dataType) * regionCi.elementCount
+				snort_dtByteCount(regionCi.dataType) * regionCi.elementCount
 			),
-			.byteStride = snort::dtByteCount(regionCi.dataType),
+			.byteStride = snort_dtByteCount(regionCi.dataType),
 			.elementCount = regionCi.elementCount,
 			.elementDisplayRowStride = regionCi.elementDisplayRowStride,
 			.label = std::string(regionCi.label),
 			.currentData = std::vector<uint8_t>(
-				snort::dtByteCount(regionCi.dataType) * regionCi.elementCount
+				snort_dtByteCount(regionCi.dataType) * regionCi.elementCount
 			),
 			.image = image,
 			.texture = texture,
@@ -142,6 +155,9 @@ void snort_deviceDestroy(
 	snort::Device * devPtr = (snort::Device *)(uintptr_t)(device->handle);
 	delete devPtr;
 	device->handle = 0;
+
+	// rlImGuiShutdown();
+	CloseWindow();
 }
 
 // --
@@ -175,10 +191,32 @@ void snort_endFrame(
 		return;
 	}
 
-	// -- increment instruction count
-	++ device.instructionCount;
+	// -- recording
+	bool const shouldRecordDuringDelta = (
+		device.isRecording
+		&& !device.isRecordingFirstFrame
+	);
+	// if first frame recording, write all memory region data as diff
+	if (device.isRecording) {
+		if (device.isRecordingFirstFrame) {
+			for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
+				auto & regionInfo = device.currentMemoryRegion[it];
+				auto & referenceData = memoryRegions[it].data;
+				SnortFs::MemoryRegionDiffRecord diffRecord = {
+					.byteOffset = 0u,
+					.byteCount = regionInfo.byteCount,
+					.data = referenceData,
+				};
+				SnortFs::replayRecord(
+					device.recordingFile,
+					1u,
+					&diffRecord
+				);
+			}
+		}
+	}
 
-	// -- delta frame memory
+	// -- local delta frame memory
 	if (device.frameHistory.size() > 5u) {
 		device.frameHistory.erase(device.frameHistory.begin());
 	}
@@ -186,7 +224,7 @@ void snort_endFrame(
 	frameDelta.memoryRegionDeltas.resize(device.currentMemoryRegion.size());
 	for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
 		frameDelta.memoryRegionDeltas[it] = (
-			::storeFrameDelta(device, memoryRegions, it)
+			::storeFrameDelta(device, shouldRecordDuringDelta, memoryRegions, it)
 		);
 	}
 
@@ -203,4 +241,7 @@ void snort_endFrame(
 
 	// -- display
 	snort::displayFrameEnd(device);
+
+	// -- increment instruction count
+	++ device.instructionCount;
 }

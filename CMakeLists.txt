@@ -43,18 +43,31 @@ add_library(
 target_link_libraries(imgui PRIVATE raylib)
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${RLIMGUI_DIR})
 
-
+# imgui filedialog
+add_library(
+	imguifiledialog
+	STATIC
+	external/ImGuiFileDialog/ImGuiFileDialog.cpp
+)
+target_include_directories(
+	imguifiledialog
+	PUBLIC
+	external/ImGuiFileDialog
+)
+target_link_libraries(imguifiledialog PUBLIC imgui)
 
 # snort
 add_subdirectory(snort)
+add_subdirectory(snort-harness)
 add_subdirectory(snort-replay)
-#
+add_subdirectory(snort-ui)
+
+# snort view
+add_subdirectory(snort-view)
+
 # suite
 add_subdirectory(suite/unit-tests)
-#
-## core library
-#add_subdirectory(core)
-#
+
 ## emulators
 #add_subdirectory(emulators/chip-8)
 #

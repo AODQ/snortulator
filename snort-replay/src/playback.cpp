@@ -27,6 +27,7 @@ struct FileData {
 	std::string recordingFilepath;
 	uint64_t recordingRegionOffset {0};
 	uint64_t recordingInstructionIndex {0};
+	uint64_t recordingByteCount {0};
 };
 
 } // namespace
@@ -46,7 +47,12 @@ SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
 		std::array<char, 8> magic;
 		fread(magic.data(), 1, 8, filePtr);
 		if (memcmp(magic.data(), "SNORTRPL", 8) != 0) {
-			printf("invalid replay file %s\n", filepath);
+			printf("failed to read magic number of file %s\n", filepath);
+			printf("'%c' '%c' '%c' '%c' '%c' '%c' '%c' '%c'\n",
+				magic[0], magic[1], magic[2], magic[3],
+				magic[4], magic[5], magic[6], magic[7]
+			);
+			fflush(filePtr);
 			fclose(filePtr);
 			return SnortFs::ReplayFile { 0 };
 		}
@@ -68,7 +74,8 @@ SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
 	// -- read per-instruction diffs
 	for (size_t instrIt = 0; instrIt < fileData.instructions.size(); ++instrIt) {
 		auto & instruction = fileData.instructions[instrIt];
-		fileData.instructions[instrIt].regionDiffs.resize(fileData.regionCount);
+		instruction.regionDiffs.resize(fileData.regionCount);
+		instruction.regionDiffRaw.resize(fileData.regionCount);
 		// read per-memory region diffs
 		for (size_t regionIt = 0; regionIt < fileData.regionCount; ++regionIt) {
 			uint64_t diffCount;
@@ -101,7 +108,7 @@ SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
 		std::array<char, 8> magic;
 		fread(magic.data(), 1, 8, filePtr);
 		if (memcmp(magic.data(), "SNORTRPL", 8) != 0) {
-			printf("invalid replay file %s\n", filepath);
+			printf("failed to readback magic number %s\n", filepath);
 			fclose(filePtr);
 			return SnortFs::ReplayFile { 0 };
 		}
@@ -115,10 +122,11 @@ SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
 
 // --
 
-void SnortFs::replayClose(ReplayFile const file) {
+void SnortFs::replayClose(ReplayFile & file) {
 	if (file.handle == 0) { return; }
 	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
 	delete fileDataPtr;
+	file.handle = 0;
 }
 
 // --
@@ -186,6 +194,11 @@ SnortFs::ReplayFileRecorder SnortFs::replayRecordOpen(
 		.instructions = {},
 		.recordingFilepath = filepath,
 	};
+	printf("starting recording to file '%s' with instruction offset %zu and region count %zu\n",
+		fileData.recordingFilepath.c_str(),
+		(size_t)fileData.instructionOffset,
+		(size_t)fileData.regionCount
+	);
 	return SnortFs::ReplayFileRecorder {
 		(uint64_t)(uintptr_t)(new FileData(std::move(fileData)))
 	};
@@ -193,20 +206,40 @@ SnortFs::ReplayFileRecorder SnortFs::replayRecordOpen(
 
 // --
 
-void SnortFs::replayRecordClose(ReplayFileRecorder const recorder) {
+void SnortFs::replayRecordClose(ReplayFileRecorder & recorder) {
 	if (recorder.handle == 0u) { return; }
 	FileData & fileData = *(FileData *)(uintptr_t)(recorder.handle);
 	if (fileData.recordingRegionOffset != fileData.regionCount) {
 		printf(
 			"warning: recording ended with incomplete instruction, "
 			"recorded %zu regions out of %zu for instruction %zu\n",
-			fileData.recordingRegionOffset,
-			fileData.regionCount,
-			fileData.recordingInstructionIndex
+			(size_t)fileData.recordingRegionOffset,
+			(size_t)fileData.regionCount,
+			(size_t)fileData.recordingInstructionIndex
 		);
 	}
 
+	printf(
+		"closing recording to file '%s', recorded %zu instructions and"
+		" %zu total KiB\n",
+		fileData.recordingFilepath.c_str(),
+		fileData.instructions.size(),
+		(size_t)(fileData.recordingByteCount / 1024ull)
+	);
+
 	FILE * filePtr = fopen(fileData.recordingFilepath.c_str(), "wb");
+
+	if (filePtr == nullptr) {
+		printf(
+			"error: failed to open file for writing replay recording at '%s'\n",
+			fileData.recordingFilepath.c_str()
+		);
+		delete &fileData;
+		recorder.handle = 0;
+		fflush(filePtr);
+		fclose(filePtr);
+		return;
+	}
 
 	// -- write magic number
 	{
@@ -246,20 +279,41 @@ void SnortFs::replayRecordClose(ReplayFileRecorder const recorder) {
 	}
 
 	delete &fileData;
+	fflush(filePtr);
+	fclose(filePtr);
+	recorder.handle = 0;
 }
 
 // --
 
 void SnortFs::replayRecord(
-	ReplayFileRecorder const recorder,
+	ReplayFileRecorder & recorder,
 	size_t const diffCount,
 	MemoryRegionDiffRecord const * diffs
 ) {
+	if (recorder.handle == 0) {
+		printf(
+			"err: recording replay diff with invalid file recorder\n"
+		);
+		return;
+	}
 	FileData & fileData = *(FileData *)(uintptr_t)(recorder.handle);
 	// -- check if need to start a new instruction
 	if (fileData.recordingRegionOffset >= fileData.regionCount) {
 		fileData.recordingRegionOffset = 0;
 		fileData.recordingInstructionIndex += 1;
+		fileData.instructions.emplace_back();
+		fileData.instructions.back().regionDiffs.resize(fileData.regionCount);
+	}
+	else if (fileData.instructions.size() == 0) {
+		// no instruction started
+		fileData.instructions.emplace_back();
+		fileData.instructions.back().regionDiffs.resize(fileData.regionCount);
+	}
+
+	// -- track new byte count
+	for (size_t it = 0; it < diffCount; ++ it) {
+		fileData.recordingByteCount += diffs[it].byteCount;
 	}
 
 	// -- store the diffs for the current instruction and region
@@ -267,6 +321,29 @@ void SnortFs::replayRecord(
 		fileData.instructions[fileData.recordingInstructionIndex]
 	);
 	instruction.regionDiffs[fileData.recordingRegionOffset].resize(diffCount);
+	for (size_t it = 0; it < diffCount; ++ it) {
+		instruction.regionDiffs[fileData.recordingRegionOffset][it] = {
+			.byteOffset = diffs[it].byteOffset,
+			.byteCount = diffs[it].byteCount,
+			.data = std::vector<uint8_t>(
+				diffs[it].data,
+				diffs[it].data + diffs[it].byteCount
+			),
+		};
+	}
 
 	fileData.recordingRegionOffset += 1;
+
+	// for now limit to 64MiB diffs, anything more is probably 
+	if (fileData.recordingRegionOffset == fileData.regionCount) {
+		if (fileData.recordingByteCount > 64ull * 1024ull * 1024ull) {
+			printf(
+				"error: recording instruction %zu with large byte count %zu,\n"
+				"prematurely closing\n",
+				(size_t)fileData.recordingInstructionIndex,
+				(size_t)fileData.recordingByteCount
+			);
+			SnortFs::replayRecordClose(recorder);
+		}
+	}
 }

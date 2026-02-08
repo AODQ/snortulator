@@ -13,6 +13,8 @@ target_link_libraries(
 	unit-tests
 	PUBLIC
 		snort
+		snort-replay
+		snort-harness
 )
 
 # install

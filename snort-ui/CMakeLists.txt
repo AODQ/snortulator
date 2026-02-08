@@ -1,21 +1,24 @@
 add_library(
-	snort
+	snort-ui
 	STATIC
-	src/snort.cpp
+	src/ui.cpp
 )
 
 target_compile_options(
-	snort
+	snort-ui
 	PRIVATE
 		-Wall
 )
 
 target_include_directories(
-	snort
+	snort-ui
 	PUBLIC
 		include/
 )
 
 target_link_libraries(
+	snort-ui
+	raylib
+	imgui
 	snort
 )

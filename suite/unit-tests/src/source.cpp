@@ -1,9 +1,106 @@
-#include <snort/snort.hpp>
+#include <snort/snort.h>
+
+#include <snort-harness/snort-harness.h>
+#include <snort-replay/fs.hpp>
 
 #include <string>
 #include <vector>
 
+#define Assert(x) \
+	if (!(x)) { \
+		printf("assertion failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); \
+		std::abort(); \
+	}
+
+void replayTests() {
+	// -- record
+	SnortFs::ReplayFileRecorder file = (
+		SnortFs::replayRecordOpen(
+			"test-replay.rpl",
+			/*instructionOffset=*/ 0,
+			/*regionCount=*/ 2
+		)
+	);
+	Assert(file.handle != 0);
+
+	{
+		std::vector<SnortFs::MemoryRegionDiffRecord> diffs = {
+			{ .byteOffset = 0, .byteCount = 4, .data = (uint8_t const *)"test" },
+			{ .byteOffset = 4, .byteCount = 4, .data = (uint8_t const *)"data" },
+		};
+		SnortFs::replayRecord(file, 1, diffs.data());
+		SnortFs::replayRecord(file, 1, diffs.data()+1);
+	}
+	{
+		std::vector<SnortFs::MemoryRegionDiffRecord> diffs = {
+			{ .byteOffset = 2, .byteCount = 2, .data = (uint8_t const *)"he" },
+			{ .byteOffset = 2, .byteCount = 2, .data = (uint8_t const *)"lo" },
+		};
+		SnortFs::replayRecord(file, 1, diffs.data());
+		SnortFs::replayRecord(file, 1, diffs.data()+1);
+	}
+	{
+		std::vector<SnortFs::MemoryRegionDiffRecord> diffs = {
+			{ .byteOffset = 0, .byteCount = 2, .data = (uint8_t const *)"wo" },
+			{ .byteOffset = 0, .byteCount = 2, .data = (uint8_t const *)"rl" },
+		};
+		SnortFs::replayRecord(file, 1, diffs.data());
+		SnortFs::replayRecord(file, 1, diffs.data()+1);
+	}
+	SnortFs::replayRecordClose(file);
+	Assert(file.handle == 0);
+
+	// -- playback
+	SnortFs::ReplayFile replayFile = SnortFs::replayOpen("test-replay.rpl");
+	Assert(replayFile.handle != 0);
+	Assert(SnortFs::replayInstructionOffset(replayFile) == 0);
+	Assert(SnortFs::replayInstructionCount(replayFile) == 3);
+	Assert(SnortFs::replayRegionCount(replayFile) == 2);
+	{
+		SnortFs::MemoryRegionDiff * diffs = SnortFs::replayInstructionDiff(replayFile, 0, 0);
+		Assert(diffs[0].byteOffset == 0);
+		Assert(diffs[0].byteCount == 4);
+		Assert(memcmp(diffs[0].data, "test", 4) == 0);
+	}
+	{
+		SnortFs::MemoryRegionDiff * diffs = SnortFs::replayInstructionDiff(replayFile, 0, 1);
+		Assert(diffs[0].byteOffset == 4);
+		Assert(diffs[0].byteCount == 4);
+		Assert(memcmp(diffs[0].data, "data", 4) == 0);
+	}
+
+	{
+		SnortFs::MemoryRegionDiff * diffs = SnortFs::replayInstructionDiff(replayFile, 1, 0);
+		Assert(diffs[0].byteOffset == 2);
+		Assert(diffs[0].byteCount == 2);
+		Assert(memcmp(diffs[0].data, "he", 2) == 0);
+	}
+	{
+		SnortFs::MemoryRegionDiff * diffs = SnortFs::replayInstructionDiff(replayFile, 1, 1);
+		Assert(diffs[0].byteOffset == 2);
+		Assert(diffs[0].byteCount == 2);
+		Assert(memcmp(diffs[0].data, "lo", 2) == 0);
+	}
+	{
+		SnortFs::MemoryRegionDiff * diffs = SnortFs::replayInstructionDiff(replayFile, 2, 0);
+		Assert(diffs[0].byteOffset == 0);
+		Assert(diffs[0].byteCount == 2);
+		Assert(memcmp(diffs[0].data, "wo", 2) == 0);
+	}
+	{
+		SnortFs::MemoryRegionDiff * diffs = SnortFs::replayInstructionDiff(replayFile, 2, 1);
+		Assert(diffs[0].byteOffset == 0);
+		Assert(diffs[0].byteCount == 2);
+		Assert(memcmp(diffs[0].data, "rl", 2) == 0);
+	}
+
+	SnortFs::replayClose(replayFile);
+	Assert(replayFile.handle == 0);
+}
+
 int32_t main() {
+	// replay tests
+	replayTests();
 	// device creation
 	SnortDevice device = []() {
 		std::vector<SnortMemoryRegionCreateInfo> memoryRegions = {

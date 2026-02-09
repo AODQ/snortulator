@@ -18,7 +18,7 @@ target_include_directories(
 
 target_link_libraries(
 	snort-ui
-	raylib
-	imgui
-	snort
+		raylib
+		imgui
+		snort
 )

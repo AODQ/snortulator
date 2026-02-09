@@ -2,18 +2,28 @@
 
 #include <raylib.h>
 #include <imgui.h>
+#include <vector>
 
-namespace gui { namespace {
+namespace gui {
 	void displayMemoryRegion(
 		SnortMemoryRegionCreateInfo const & regionInfo,
-		void const * const regionData
+		u8 const * const regionData
 	);
 
 	void displayMemoryTexture(
 		SnortMemoryRegionCreateInfo const & regionInfo,
-		void const * const regionData
+		u8 const * const regionData
 	);
-}}
+
+	struct ImageTexture {
+		Image image;
+		Texture2D texture;
+		SnortDt dataType;
+	};
+	ImageTexture findOrCreateImageTexture(
+		SnortMemoryRegionCreateInfo const & regionInfo
+	);
+}
 
 // --
 
@@ -54,7 +64,7 @@ void snort_displayFrameEnd() {
 void snort_displayMemory(
 	size_t const regions,
 	SnortMemoryRegionCreateInfo const * const regionInfo,
-	void const * const * const regionData
+	u8 const * const * const regionData
 ) {
 	for (size_t it = 0; it < regions; ++ it) {
 		auto const & info = regionInfo[it];
@@ -68,7 +78,7 @@ void snort_displayMemory(
 
 void gui::displayMemoryRegion(
 	SnortMemoryRegionCreateInfo const & regionInfo,
-	void const * const regionData
+	u8 const * const regionData
 ) {
 	// display texture if image data type
 	if (
@@ -113,39 +123,73 @@ void gui::displayMemoryRegion(
 
 // --
 
+gui::ImageTexture gui::findOrCreateImageTexture(
+	SnortMemoryRegionCreateInfo const & regionInfo
+) {
+	static std::vector<ImageTexture> imageTextures;
+	auto const width = regionInfo.elementDisplayRowStride;
+	auto const height = (
+		regionInfo.elementCount / regionInfo.elementDisplayRowStride
+	);
+	// TODO will need to add some logic to not re-use a texture multiple
+	// times per frame
+	for (auto & imageTexture : imageTextures) {
+		if (
+			   imageTexture.image.width == width
+			&& imageTexture.image.height == height
+			&& imageTexture.dataType == regionInfo.dataType
+		) {
+			return imageTexture;
+		}
+	}
+
+	Image image = GenImageColor(width, height, BLACK);
+	Texture2D texture = LoadTextureFromImage(image);
+	ImageTexture imageTexture = {
+		.image = image,
+		.texture = texture,
+		.dataType = regionInfo.dataType,
+	};
+	imageTextures.emplace_back(imageTexture);
+	return imageTexture;
+}
+
+// --
+
 void gui::displayMemoryTexture(
 	SnortMemoryRegionCreateInfo const & regionInfo,
-	void const * const regionData
+	u8 const * const regionData
 ) {
+	gui::ImageTexture const image = gui::findOrCreateImageTexture(regionInfo);
 	// display as texture, but first update the image data
 	if (regionInfo.dataType == kSnortDt_r8) {
 		// single channel image
-		for (int y = 0; y < regionInfo.image.height; ++ y) {
-			for (int x = 0; x < regionInfo.image.width; ++ x) {
-				size_t index = y * regionInfo.image.width + x;
+		for (int y = 0; y < image.image.height; ++ y) {
+			for (int x = 0; x < image.image.width; ++ x) {
+				size_t index = y * image.image.width + x;
 				u8 value = regionData[index];
-				((u8 *)regionInfo.image.data)[index * 4 + 0] = value;
-				((u8 *)regionInfo.image.data)[index * 4 + 1] = value;
-				((u8 *)regionInfo.image.data)[index * 4 + 2] = value;
-				((u8 *)regionInfo.image.data)[index * 4 + 3] = 255u;
+				((u8 *)image.image.data)[index * 4 + 0] = value;
+				((u8 *)image.image.data)[index * 4 + 1] = value;
+				((u8 *)image.image.data)[index * 4 + 2] = value;
+				((u8 *)image.image.data)[index * 4 + 3] = 255u;
 			}
 		}
-		UpdateTexture(regionInfo.texture, regionInfo.image.data);
+		UpdateTexture(image.texture, image.image.data);
 	}
 	else if (regionInfo.dataType == kSnortDt_rgba8) {
 		// rgba8 image
 		memcpy(
-			regionInfo.image.data,
-			regionData.data(),
-			regionInfo.image.width * regionInfo.image.height * 4
+			image.image.data,
+			regionData,
+			image.image.width * image.image.height * 4
 		);
-		UpdateTexture(regionInfo.texture, regionInfo.image.data);
+		UpdateTexture(image.texture, image.image.data);
 	}
 	ImGui::Image(
-		(void *)(uintptr_t)regionInfo.texture.id,
+		(void *)(uintptr_t)image.texture.id,
 		ImVec2(
-			(float)regionInfo.image.width,
-			(float)regionInfo.image.height
+			(float)image.image.width,
+			(float)image.image.height
 		)
 	);
 }

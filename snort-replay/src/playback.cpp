@@ -21,7 +21,8 @@ struct FileInstruction {
 
 struct FileData {
 	uint64_t instructionOffset;
-	uint64_t regionCount;
+	std::vector<SnortMemoryRegionCreateInfo> regionCreateInfo;
+	std::vector<std::string> regionLabels;
 	std::vector<FileInstruction> instructions;
 
 	std::string recordingFilepath;
@@ -36,7 +37,7 @@ struct FileData {
 // -- snort fs impl ------------------------------------------------------------
 // -----------------------------------------------------------------------------
 
-SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
+SnortFs::ReplayFile SnortFs::replay_open(char const * const filepath) {
 	FILE * filePtr = fopen(filepath, "rb");
 	if (filePtr == nullptr) {
 		printf("failed to open replay file %s\n", filepath);
@@ -68,16 +69,36 @@ SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
 		fread(&instructionCount, 8, 1, filePtr);
 		fread(&regionCount, 8, 1, filePtr);
 		fileData.instructions.resize(instructionCount);
-		fileData.regionCount = regionCount;
+		fileData.regionCreateInfo.resize(regionCount);
+		fileData.regionLabels.resize(regionCount);
+	}
+
+	// read per-memory region create info
+	for (size_t regIt = 0; regIt < fileData.regionCreateInfo.size(); ++regIt) {
+		auto & regionInfo = fileData.regionCreateInfo[regIt];
+		fread(&regionInfo.dataType, 8, 1, filePtr);
+		fread(&regionInfo.elementCount, 8, 1, filePtr);
+		fread(&regionInfo.elementDisplayRowStride, 8, 1, filePtr);
+		char labelBuffer[256];
+		memset(labelBuffer, 0, 256);
+		for (size_t it = 0; it < 256; ++it) {
+			char c;
+			fread(&c, 1, 1, filePtr);
+			if (c == '\0') { break; }
+			labelBuffer[it] = c;
+		}
+		fileData.regionLabels[regIt] = std::string(labelBuffer);
+		regionInfo.label = fileData.regionLabels[regIt].c_str();
 	}
 
 	// -- read per-instruction diffs
 	for (size_t instrIt = 0; instrIt < fileData.instructions.size(); ++instrIt) {
 		auto & instruction = fileData.instructions[instrIt];
-		instruction.regionDiffs.resize(fileData.regionCount);
-		instruction.regionDiffRaw.resize(fileData.regionCount);
+		auto const regionCount = fileData.regionCreateInfo.size();
+		instruction.regionDiffs.resize(regionCount);
+		instruction.regionDiffRaw.resize(regionCount);
 		// read per-memory region diffs
-		for (size_t regionIt = 0; regionIt < fileData.regionCount; ++regionIt) {
+		for (size_t regionIt = 0; regionIt < regionCount; ++regionIt) {
 			uint64_t diffCount;
 			fread(&diffCount, 8, 1, filePtr);
 			instruction.regionDiffs[regionIt].resize(diffCount);
@@ -122,7 +143,7 @@ SnortFs::ReplayFile SnortFs::replayOpen(char const * const filepath) {
 
 // --
 
-void SnortFs::replayClose(ReplayFile & file) {
+void SnortFs::replay_close(ReplayFile & file) {
 	if (file.handle == 0) { return; }
 	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
 	delete fileDataPtr;
@@ -131,28 +152,37 @@ void SnortFs::replayClose(ReplayFile & file) {
 
 // --
 
-uint64_t SnortFs::replayInstructionOffset(ReplayFile const file) {
+uint64_t SnortFs::replay_instructionOffset(ReplayFile const file) {
 	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
 	return fileDataPtr->instructionOffset;
 }
 
 // --
 
-uint64_t SnortFs::replayInstructionCount(ReplayFile const file) {
+uint64_t SnortFs::replay_instructionCount(ReplayFile const file) {
 	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
 	return fileDataPtr->instructions.size();
 }
 
 // --
 
-uint64_t SnortFs::replayRegionCount(ReplayFile const file) {
+uint64_t SnortFs::replay_regionCount(ReplayFile const file) {
 	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
-	return fileDataPtr->regionCount;
+	return fileDataPtr->regionCreateInfo.size();
 }
 
 // --
 
-size_t SnortFs::replayInstructionDiffCount(
+SnortMemoryRegionCreateInfo const * SnortFs::replay_regionInfo(
+	ReplayFile const file
+) {
+	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
+	return fileDataPtr->regionCreateInfo.data();
+}
+
+// --
+
+size_t SnortFs::replay_instructionDiffCount(
 	ReplayFile const file,
 	size_t const instructionIndex,
 	size_t const regionIndex
@@ -166,7 +196,7 @@ size_t SnortFs::replayInstructionDiffCount(
 
 // --
 
-SnortFs::MemoryRegionDiff * SnortFs::replayInstructionDiff(
+SnortFs::MemoryRegionDiff * SnortFs::replay_instructionDiff(
 	ReplayFile const file,
 	size_t const instructionIndex,
 	size_t const regionIndex
@@ -183,21 +213,28 @@ SnortFs::MemoryRegionDiff * SnortFs::replayInstructionDiff(
 // -- snort fs recording impl --------------------------------------------------
 // -----------------------------------------------------------------------------
 
-SnortFs::ReplayFileRecorder SnortFs::replayRecordOpen(
+SnortFs::ReplayFileRecorder SnortFs::replayRecorder_open(
 	char const * const filepath,
 	uint64_t const instructionOffset,
-	uint64_t const regionCount
+	uint64_t const regionCount,
+	SnortMemoryRegionCreateInfo const * const regionCreateInfo
 ) {
-	FileData const fileData {
+	FileData fileData {
 		.instructionOffset = instructionOffset,
-		.regionCount = regionCount,
+		.regionCreateInfo = std::vector<SnortMemoryRegionCreateInfo>(regionCount),
+		.regionLabels = std::vector<std::string>(regionCount),
 		.instructions = {},
 		.recordingFilepath = filepath,
 	};
+	for (size_t it = 0; it < regionCount; ++it) {
+		fileData.regionCreateInfo[it] = regionCreateInfo[it];
+		fileData.regionLabels[it] = std::string(regionCreateInfo[it].label);
+		fileData.regionCreateInfo[it].label = fileData.regionLabels[it].c_str();
+	}
 	printf("starting recording to file '%s' with instruction offset %zu and region count %zu\n",
 		fileData.recordingFilepath.c_str(),
 		(size_t)fileData.instructionOffset,
-		(size_t)fileData.regionCount
+		(size_t)fileData.regionCreateInfo.size()
 	);
 	return SnortFs::ReplayFileRecorder {
 		(uint64_t)(uintptr_t)(new FileData(std::move(fileData)))
@@ -206,15 +243,15 @@ SnortFs::ReplayFileRecorder SnortFs::replayRecordOpen(
 
 // --
 
-void SnortFs::replayRecordClose(ReplayFileRecorder & recorder) {
+void SnortFs::replayRecorder_close(ReplayFileRecorder & recorder) {
 	if (recorder.handle == 0u) { return; }
 	FileData & fileData = *(FileData *)(uintptr_t)(recorder.handle);
-	if (fileData.recordingRegionOffset != fileData.regionCount) {
+	if (fileData.recordingRegionOffset != fileData.regionCreateInfo.size()) {
 		printf(
 			"warning: recording ended with incomplete instruction, "
 			"recorded %zu regions out of %zu for instruction %zu\n",
 			(size_t)fileData.recordingRegionOffset,
-			(size_t)fileData.regionCount,
+			(size_t)fileData.regionCreateInfo.size(),
 			(size_t)fileData.recordingInstructionIndex
 		);
 	}
@@ -251,20 +288,32 @@ void SnortFs::replayRecordClose(ReplayFileRecorder & recorder) {
 	fwrite(&fileData.instructionOffset, 8, 1, filePtr);
 	{
 		uint64_t instructionCount = fileData.instructions.size();
-		uint64_t regionCount = fileData.regionCount;
+		uint64_t regionCount = fileData.regionCreateInfo.size();
 		fwrite(&instructionCount, 8, 1, filePtr);
 		fwrite(&regionCount, 8, 1, filePtr);
+	}
+
+	// write per-memory region create info
+	for (size_t regIt = 0; regIt < fileData.regionCreateInfo.size(); ++regIt) {
+		auto const & regionInfo = fileData.regionCreateInfo[regIt];
+		fwrite(&regionInfo.dataType, 8, 1, filePtr);
+		fwrite(&regionInfo.elementCount, 8, 1, filePtr);
+		fwrite(&regionInfo.elementDisplayRowStride, 8, 1, filePtr);
+		for (char const c : fileData.regionLabels[regIt]) {
+			fwrite(&c, 1, 1, filePtr);
+		}
+		fwrite("\0", 1, 1, filePtr);
 	}
 
 	// -- write per-instruction diffs
 	for (size_t instrIt = 0; instrIt < fileData.instructions.size(); ++instrIt) {
 		auto const & instruction = fileData.instructions[instrIt];
 		// write per-memory region diffs
-		for (size_t regionIt = 0; regionIt < fileData.regionCount; ++regionIt) {
-			uint64_t diffCount = instruction.regionDiffs[regionIt].size();
+		for (size_t regIt = 0; regIt < fileData.regionCreateInfo.size(); ++regIt){
+			uint64_t diffCount = instruction.regionDiffs[regIt].size();
 			fwrite(&diffCount, 8, 1, filePtr);
 			for (size_t diffIt = 0; diffIt < diffCount; ++diffIt) {
-				auto const & diff = instruction.regionDiffs[regionIt][diffIt];
+				auto const & diff = instruction.regionDiffs[regIt][diffIt];
 				fwrite(&diff.byteOffset, 8, 1, filePtr);
 				fwrite(&diff.byteCount, 8, 1, filePtr);
 				fwrite(diff.data.data(), 1, diff.data.size(), filePtr);
@@ -286,7 +335,7 @@ void SnortFs::replayRecordClose(ReplayFileRecorder & recorder) {
 
 // --
 
-void SnortFs::replayRecord(
+void SnortFs::replayRecorder_recordInstruction(
 	ReplayFileRecorder & recorder,
 	size_t const diffCount,
 	MemoryRegionDiffRecord const * diffs
@@ -298,17 +347,18 @@ void SnortFs::replayRecord(
 		return;
 	}
 	FileData & fileData = *(FileData *)(uintptr_t)(recorder.handle);
+	auto const regionCount = fileData.regionCreateInfo.size();
 	// -- check if need to start a new instruction
-	if (fileData.recordingRegionOffset >= fileData.regionCount) {
+	if (fileData.recordingRegionOffset >= regionCount) {
 		fileData.recordingRegionOffset = 0;
 		fileData.recordingInstructionIndex += 1;
 		fileData.instructions.emplace_back();
-		fileData.instructions.back().regionDiffs.resize(fileData.regionCount);
+		fileData.instructions.back().regionDiffs.resize(regionCount);
 	}
 	else if (fileData.instructions.size() == 0) {
 		// no instruction started
 		fileData.instructions.emplace_back();
-		fileData.instructions.back().regionDiffs.resize(fileData.regionCount);
+		fileData.instructions.back().regionDiffs.resize(regionCount);
 	}
 
 	// -- track new byte count
@@ -335,7 +385,7 @@ void SnortFs::replayRecord(
 	fileData.recordingRegionOffset += 1;
 
 	// for now limit to 64MiB diffs, anything more is probably 
-	if (fileData.recordingRegionOffset == fileData.regionCount) {
+	if (fileData.recordingRegionOffset == regionCount) {
 		if (fileData.recordingByteCount > 64ull * 1024ull * 1024ull) {
 			printf(
 				"error: recording instruction %zu with large byte count %zu,\n"
@@ -343,7 +393,7 @@ void SnortFs::replayRecord(
 				(size_t)fileData.recordingInstructionIndex,
 				(size_t)fileData.recordingByteCount
 			);
-			SnortFs::replayRecordClose(recorder);
+			SnortFs::replayRecorder_close(recorder);
 		}
 	}
 }

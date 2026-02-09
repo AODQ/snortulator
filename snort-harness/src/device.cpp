@@ -1,18 +1,17 @@
 #include "device.hpp"
 
-#include "imgui-display.hpp"
+#include <ctime>
+#include <snort/snort-ui.h>
 
 #include <cstring>
 
 namespace {
 
-std::vector<snort::MemoryRegionDelta> storeFrameDelta(
+void storeFrameDelta(
 	snort::Device & device,
-	bool const recordToDevice,
 	SnortMemoryRegion const * memoryRegions,
 	size_t const regionIndex
 ) {
-	std::vector<snort::MemoryRegionDelta> delta;
 	// the recording delta is different since it supports forwarding data,
 	//   the local delta is for rolling back data
 	std::vector<SnortFs::MemoryRegionDiffRecord> recordDelta;
@@ -34,30 +33,19 @@ std::vector<snort::MemoryRegionDelta> storeFrameDelta(
 		}
 		// if byte isn't different, and previous diff seen, store the diff
 		else if (!isDiff && hasStartedDiff) {
-			delta.emplace_back(
-				snort::MemoryRegionDelta {
+			recordDelta.emplace_back(
+				SnortFs::MemoryRegionDiffRecord {
 					.byteOffset = startByteDiff,
-					.deltaData = std::vector<uint8_t>(
-						&referenceData[startByteDiff],
-						&referenceData[byteIt]
-					),
+					.byteCount = (byteIt - startByteDiff),
+					.data = {},
 				}
 			);
-			if (recordToDevice) {
-				recordDelta.emplace_back(
-					SnortFs::MemoryRegionDiffRecord {
-						.byteOffset = startByteDiff,
-						.byteCount = (byteIt - startByteDiff),
-						.data = {},
-					}
-				);
-				recordDeltaData.emplace_back(
-					std::vector<uint8_t>(
-						&referenceData[startByteDiff],
-						&referenceData[byteIt]
-					)
-				);
-			}
+			recordDeltaData.emplace_back(
+				std::vector<uint8_t>(
+					&referenceData[startByteDiff],
+					&referenceData[byteIt]
+				)
+			);
 			startByteDiff = -1u;
 		}
 		// if byte is different, and no previous diff seen, start diff
@@ -72,19 +60,17 @@ std::vector<snort::MemoryRegionDelta> storeFrameDelta(
 			SnortAssert(false && "unreachable");
 		}
 	}
-	if (recordToDevice) {
-		// store the data at end to avoid ptr movement from reallocs
-		for (size_t it = 0; it < recordDelta.size(); ++ it) {
-			recordDelta[it].data = recordDeltaData[it].data();
-		}
-		// record delta for current region and current instruction into file
-		SnortFs::replayRecord(
-			device.recordingFile,
-			recordDelta.size(),
-			recordDelta.data()
-		);
+
+	// store the data at end to avoid ptr movement from reallocs
+	for (size_t it = 0; it < recordDelta.size(); ++ it) {
+		recordDelta[it].data = recordDeltaData[it].data();
 	}
-	return delta;
+	// record delta for current region and current instruction into file
+	SnortFs::replayRecorder_recordInstruction(
+		device.recordingFile,
+		recordDelta.size(),
+		recordDelta.data()
+	);
 }
 
 } // namespace
@@ -96,15 +82,11 @@ SnortDevice snort_deviceCreate(
 ) {
 	snort::Device device = {
 		.name = std::string(ci->name),
-		.frameHistory = {},
 		.currentMemoryRegion = {},
 	};
 
 	// -- initialize raylib + imgui
-	SetTraceLogLevel(LOG_ERROR);
-	InitWindow(1200, 600, ci->name);
-	SetTargetFPS(60);
-	snort::displayInitialize(device);
+	snort_displayInitialize();
 
 	// -- register memory regions
 	for (size_t it = 0; it < ci->memoryRegionCount; ++ it) {
@@ -135,10 +117,19 @@ SnortDevice snort_deviceCreate(
 			.currentData = std::vector<uint8_t>(
 				snort_dtByteCount(regionCi.dataType) * regionCi.elementCount
 			),
-			.image = image,
-			.texture = texture,
 		};
 		device.currentMemoryRegion.push_back(regionInfo);
+	}
+
+	// -- reconstruct create info
+	for (size_t it = 0; it < ci->memoryRegionCount; ++ it) {
+		auto & region = device.currentMemoryRegion[it];
+		device.memoryRegionCreateInfo.emplace_back(SnortMemoryRegionCreateInfo {
+			.dataType = region.dataType,
+			.elementCount = region.elementCount,
+			.elementDisplayRowStride = region.elementDisplayRowStride,
+			.label = region.label.c_str(),
+		});
 	}
 
 	return SnortDevice {
@@ -156,8 +147,7 @@ void snort_deviceDestroy(
 	delete devPtr;
 	device->handle = 0;
 
-	// rlImGuiShutdown();
-	CloseWindow();
+	snort_displayDestroy();
 }
 
 // --
@@ -172,9 +162,7 @@ bool snort_shouldQuit([[maybe_unused]] SnortDevice const device)
 bool snort_startFrame(SnortDevice const deviceHandle)
 {
 	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
-	BeginDrawing();
-	ClearBackground(DARKGRAY);
-	snort::displayFrameBegin(device);
+	snort_displayFrameBegin();
 	return !device.paused;
 }
 
@@ -186,18 +174,54 @@ void snort_endFrame(
 ) {
 	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
 
+	// -- imgui updates
+	{
+		ImGui::Begin("configuration");
+		ImGui::Checkbox("pause", &device.paused);
+		if (device.isRecording) {
+			if (ImGui::Button("Stop recording")) {
+				SnortFs::replayRecorder_close(device.recordingFile);
+				device.isRecording = false;
+			}
+		}
+		else if (ImGui::Button("Record")) {
+			// TODO file picker
+			char filepath[256];
+			snprintf(filepath, 256, "recording-%zu.rpl", time(NULL));
+			device.recordingFile = (
+				SnortFs::replayRecorder_open(
+					filepath,
+					/*instructionOffset=*/ device.instructionCount,
+					/*regionCount=*/ device.currentMemoryRegion.size(),
+					/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
+				)
+			);
+			if (device.recordingFile.handle == 0) {
+				printf("failed to start recording\n");
+			}
+			else {
+				device.isRecording = true;
+				device.isRecordingFirstFrame = true;
+				printf("started recording to file %s\n", filepath);
+			}
+		}
+		ImGui::End();
+	}
+
+	// -- pause check
 	if (device.paused) {
-		snort::displayFrameEnd(device);
+		snort_displayMemory(
+			device.currentMemoryRegion.size(),
+			device.memoryRegionCreateInfo.data(),
+			(u8 const * const *)memoryRegions
+		);
+		snort_displayFrameEnd();
 		return;
 	}
 
 	// -- recording
-	bool const shouldRecordDuringDelta = (
-		device.isRecording
-		&& !device.isRecordingFirstFrame
-	);
-	// if first frame recording, write all memory region data as diff
 	if (device.isRecording) {
+		// -- full frame memory
 		if (device.isRecordingFirstFrame) {
 			for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
 				auto & regionInfo = device.currentMemoryRegion[it];
@@ -207,26 +231,21 @@ void snort_endFrame(
 					.byteCount = regionInfo.byteCount,
 					.data = referenceData,
 				};
-				SnortFs::replayRecord(
+				SnortFs::replayRecorder_recordInstruction(
 					device.recordingFile,
 					1u,
 					&diffRecord
 				);
 			}
 		}
+		// -- local delta frame memory
+		else {
+			for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
+				::storeFrameDelta(device, memoryRegions, it);
+			}
+		}
 	}
 
-	// -- local delta frame memory
-	if (device.frameHistory.size() > 5u) {
-		device.frameHistory.erase(device.frameHistory.begin());
-	}
-	auto & frameDelta = device.frameHistory.emplace_back();
-	frameDelta.memoryRegionDeltas.resize(device.currentMemoryRegion.size());
-	for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
-		frameDelta.memoryRegionDeltas[it] = (
-			::storeFrameDelta(device, shouldRecordDuringDelta, memoryRegions, it)
-		);
-	}
 
 	// -- then store actual frame memory
 	for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
@@ -240,7 +259,12 @@ void snort_endFrame(
 	}
 
 	// -- display
-	snort::displayFrameEnd(device);
+	snort_displayMemory(
+		device.currentMemoryRegion.size(),
+		device.memoryRegionCreateInfo.data(),
+		(u8 const * const *)memoryRegions
+	);
+	snort_displayFrameEnd();
 
 	// -- increment instruction count
 	++ device.instructionCount;

@@ -9,6 +9,9 @@ target_compile_options(
 		-Wall
 )
 
-target_link_libraries(snort-view raylib imgui snort-replay imguifiledialog)
+target_link_libraries(
+	snort-view
+		raylib imgui snort-replay imguifiledialog snort-ui
+)
 
 install(TARGETS snort-view DESTINATION bin)

@@ -16,4 +16,7 @@ target_include_directories(
 		include/
 )
 
-target_link_libraries(snort-replay)
+target_link_libraries(
+	snort-replay
+	snort
+)

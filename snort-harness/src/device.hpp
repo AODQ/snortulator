@@ -5,9 +5,6 @@
 #include <snort/snort.h>
 #include <snort-replay/fs.hpp>
 
-// below only for initialization
-#include <raylib.h>
-
 #include <vector>
 #include <string>
 
@@ -22,10 +19,6 @@ struct MemoryRegionDelta {
 	std::vector<uint8_t> deltaData;
 };
 
-struct FrameDelta {
-	std::vector<std::vector<MemoryRegionDelta>> memoryRegionDeltas;
-};
-
 struct MemoryRegionInfo {
 	SnortDt const dataType;
 	size_t const byteCount;
@@ -34,15 +27,13 @@ struct MemoryRegionInfo {
 	size_t const elementDisplayRowStride;
 	std::string const label;
 	std::vector<uint8_t> currentData;
-	Image image {}; // for image data types
-	Texture2D texture {};
 };
 
 struct Device {
 	std::string const name;
 	size_t instructionCount { 0 };
-	std::vector<FrameDelta> frameHistory;
 	std::vector<MemoryRegionInfo> currentMemoryRegion;
+	std::vector<SnortMemoryRegionCreateInfo> memoryRegionCreateInfo;
 	u64 rngSeed { 1234u };
 	mutable int32_t displayRelativeFrame { 0 };
 	mutable bool paused { false };

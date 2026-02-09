@@ -1,5 +1,7 @@
 #include <snort-replay/fs.hpp>
 
+#include <snort/snort-ui.h>
+
 #include <ImGuiFileDialog.h>
 #include <imgui.h>
 #include <rlImGui.h>
@@ -16,9 +18,9 @@ static size_t sReplayInstructionIndex { 0 };
 
 void openReplayFile(std::string const & filepath) {
 	if (sOpenReplay.file.handle != 0) {
-		SnortFs::replayClose(sOpenReplay.file);
+		SnortFs::replay_close(sOpenReplay.file);
 	}
-	SnortFs::ReplayFile file = SnortFs::replayOpen(filepath.c_str());
+	SnortFs::ReplayFile file = SnortFs::replay_open(filepath.c_str());
 	if (file.handle == 0) {
 		printf("failed to open replay file %s\n", filepath.c_str());
 		return;
@@ -37,37 +39,33 @@ void displayReplayFile(ReplayFile const & replay) {
 	ImGui::Begin("replay file info");
 	ImGui::Text(
 		"instruction offset: %zu",
-		(size_t)SnortFs::replayInstructionOffset(replay.file)
+		(size_t)SnortFs::replay_instructionOffset(replay.file)
 	);
 	ImGui::Text(
 		"instruction count: %zu",
-		(size_t)SnortFs::replayInstructionCount(replay.file)
+		(size_t)SnortFs::replay_instructionCount(replay.file)
 	);
 	ImGui::Text(
 		"region count: %zu",
-		(size_t)SnortFs::replayRegionCount(replay.file)
+		(size_t)SnortFs::replay_regionCount(replay.file)
 	);
 	ImGui::End();
 
 	// -- display memory regions
 	ImGui::Begin("replay instruction diffs");
-	if (ImGui::Button("prev instruction")) {
-		if (sReplayInstructionIndex > 0) {
-			-- sReplayInstructionIndex;
-		}
-	}
-	if (ImGui::Button("next instruction")) {
-		if (sReplayInstructionIndex + 1 < SnortFs::replayInstructionCount(replay.file)) {
-			++ sReplayInstructionIndex;
-		}
-	}
+	ImGui::SliderInt(
+		"Instruction index",
+		(int *)&sReplayInstructionIndex,
+		0,
+		(int)(SnortFs::replay_instructionCount(replay.file) - 1)
+	);
 	ImGui::Text("current instruction index: %zu", sReplayInstructionIndex);
 	for (
 		size_t regionIt = 0;
-		regionIt < SnortFs::replayRegionCount(replay.file);
+		regionIt < SnortFs::replay_regionCount(replay.file);
 		++ regionIt
 	) {
-		size_t diffCount = SnortFs::replayInstructionDiffCount(
+		size_t diffCount = SnortFs::replay_instructionDiffCount(
 			replay.file,
 			sReplayInstructionIndex,
 			regionIt
@@ -75,7 +73,7 @@ void displayReplayFile(ReplayFile const & replay) {
 		ImGui::Text(" -- region %zu --", regionIt);
 		ImGui::Text("diff count: %zu", diffCount);
 		auto const & diffs = (
-			SnortFs::replayInstructionDiff(
+			SnortFs::replay_instructionDiff(
 				replay.file,
 				sReplayInstructionIndex,
 				regionIt
@@ -91,24 +89,55 @@ void displayReplayFile(ReplayFile const & replay) {
 		}
 	}
 	ImGui::End();
+
+	// TODO this can be optimized
+	// build up the current memory region data by applying diffs
+	std::vector<std::vector<uint8_t>> regionData(
+		SnortFs::replay_regionCount(replay.file)
+	);
+	for (size_t regIt = 0; regIt < regionData.size(); ++regIt) {
+		auto const & regionInfo = SnortFs::replay_regionInfo(replay.file)[regIt];
+		regionData[regIt].resize(
+			regionInfo.elementCount * snort_dtByteCount(regionInfo.dataType)
+		);
+		// for each instruction apply the diffs to the current region
+		for (size_t instrIt = 0; instrIt <= sReplayInstructionIndex; ++instrIt) {
+			auto const diffCount = (
+				SnortFs::replay_instructionDiffCount(replay.file, instrIt, regIt)
+			);
+			auto const & diffs = (
+				SnortFs::replay_instructionDiff(replay.file, instrIt, regIt)
+			);
+			for (size_t diffIt = 0; diffIt < diffCount; ++diffIt) {
+				auto const & diff = diffs[diffIt];
+				for (size_t byteIt = 0; byteIt < diff.byteCount; ++byteIt) {
+					regionData[regIt][diff.byteOffset + byteIt] = diff.data[byteIt];
+				}
+			}
+		}
+	}
+
+	// transform into array of pointers
+	std::vector<u8 const *> regionDataPtr(regionData.size());
+	for (size_t it = 0; it < regionData.size(); ++it) {
+		regionDataPtr[it] = regionData[it].data();
+	}
+
+	snort_displayMemory(
+		/*regions=*/ SnortFs::replay_regionCount(replay.file),
+		/*regionInfo=*/ SnortFs::replay_regionInfo(replay.file),
+		/*regionData=*/ regionDataPtr.data()
+	);
 }
 
 // -----------------------------------------------------------------------------
 
 int32_t main() {
-	SetTraceLogLevel(LOG_ERROR);
-	InitWindow(1200, 600, "snort replay viewer");
-	SetTargetFPS(60);
-	rlImGuiSetup(true);
-	ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+	snort_displayInitialize();
 	ImGui::GetIO().IniFilename = "imgui-view.ini";
 
 	while (WindowShouldClose() == false) {
-		BeginDrawing();
-		ClearBackground(DARKGRAY);
-		rlImGuiBegin();
-
-		ImGui::DockSpaceOverViewport();
+		snort_displayFrameBegin();
 
 		ImGui::Begin("stats");
 		ImGui::Text("FPS: %d", GetFPS());
@@ -142,13 +171,9 @@ int32_t main() {
 			displayReplayFile(sOpenReplay);
 		}
 
-		rlImGuiEnd();
-		EndDrawing();
+		snort_displayFrameEnd();
 	}
 
-
-	// shutdown
-	rlImGuiShutdown();
-	CloseWindow();
+	snort_displayDestroy();
 	return 0u;
 }

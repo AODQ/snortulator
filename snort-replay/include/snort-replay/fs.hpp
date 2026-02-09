@@ -1,5 +1,7 @@
 #pragma once
 
+#include <snort/snort.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -11,6 +13,12 @@
 	- instruction offset (8 bytes)
 	- instruction count (8 bytes)
 	- region count (8 bytes)
+	- per-region: (implicit)
+		- data-type (8 bytes)
+		- element count (8 bytes)
+		- element display row stride (8 bytes)
+		- label length (8 bytes)
+		- label (label length bytes)
 	- per-instruction: (implicit)
 		- per memory region: (implicit)
 			- diff count (8 bytes)
@@ -33,20 +41,24 @@ namespace SnortFs {
 
 	struct ReplayFile { uint64_t handle; };
 
-	ReplayFile replayOpen(char const * const filepath);
-	void replayClose(ReplayFile & file);
+	ReplayFile replay_open(char const * const filepath);
+	void replay_close(ReplayFile & file);
 
-	uint64_t replayInstructionOffset(ReplayFile const file);
-	uint64_t replayInstructionCount(ReplayFile const file);
-	uint64_t replayRegionCount(ReplayFile const file);
+	uint64_t replay_instructionOffset(ReplayFile const file);
+	uint64_t replay_instructionCount(ReplayFile const file);
+	uint64_t replay_regionCount(ReplayFile const file);
 
-	size_t replayInstructionDiffCount(
+	SnortMemoryRegionCreateInfo const * replay_regionInfo(
+		ReplayFile const file
+	);
+
+	size_t replay_instructionDiffCount(
 		ReplayFile const file,
 		size_t const instructionIndex,
 		size_t const regionIndex
 	);
 
-	MemoryRegionDiff * replayInstructionDiff(
+	MemoryRegionDiff * replay_instructionDiff(
 		ReplayFile const file,
 		size_t const instructionIndex,
 		size_t const regionIndex
@@ -56,12 +68,13 @@ namespace SnortFs {
 
 	struct ReplayFileRecorder { uint64_t handle; };
 
-	ReplayFileRecorder replayRecordOpen(
+	ReplayFileRecorder replayRecorder_open(
 		char const * const filepath,
 		uint64_t const instructionOffset,
-		uint64_t const regionCount
+		uint64_t const regionCount,
+		SnortMemoryRegionCreateInfo const * regionCreateInfo
 	);
-	void replayRecordClose(ReplayFileRecorder & recorder);
+	void replayRecorder_close(ReplayFileRecorder & recorder);
 
 	struct MemoryRegionDiffRecord {
 		uint64_t byteOffset;
@@ -74,7 +87,7 @@ namespace SnortFs {
 	//   and first region, etc.
 	// The first frame should probably capture the entire memory region as
 	//   a single diff so that it's all populated with data
-	void replayRecord(
+	void replayRecorder_recordInstruction(
 		ReplayFileRecorder & recorder,
 		size_t const diffCount,
 		MemoryRegionDiffRecord const * diffs

@@ -1,7 +1,6 @@
 add_library(
 	snort-harness
 	STATIC
-	src/imgui-display.cpp
 	src/random.cpp
 	src/device.cpp
 )
@@ -20,8 +19,9 @@ target_include_directories(
 
 target_link_libraries(
 	snort-harness
-	snort
-	raylib
-	imgui
-	snort-replay
+		imgui
+		raylib
+		snort
+		snort-replay
+		snort-ui
 )

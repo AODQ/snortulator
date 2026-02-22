@@ -8,3 +8,9 @@
 [submodule "external/ImGuiFileDialog"]
 	path = external/ImGuiFileDialog
 	url = https://github.com/aiekick/ImGuiFileDialog
+[submodule "third-party-emulators/chip8/CHIP-8-Emulator"]
+	path = third-party-emulators/chip8/CHIP-8-Emulator
+	url = https://github.com/JamesGriffin/CHIP-8-Emulator
+[submodule "third-party-emulators/chip8/james-griffin"]
+	path = third-party-emulators/chip8/james-griffin
+	url = https://github.com/JamesGriffin/CHIP-8-Emulator

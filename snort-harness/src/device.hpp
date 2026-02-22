@@ -31,17 +31,21 @@ struct MemoryRegionInfo {
 
 struct Device {
 	std::string const name;
-	size_t instructionCount { 0 };
+	SnortCommonInterface commonInterface { kSnortCommonInterface_custom };
 	std::vector<MemoryRegionInfo> currentMemoryRegion;
 	std::vector<SnortMemoryRegionCreateInfo> memoryRegionCreateInfo;
-	u64 rngSeed { 1234u };
-	mutable int32_t displayRelativeFrame { 0 };
-	mutable bool paused { false };
 
+	// -- emulator state
+	u64 rngSeed { 1234u };
+	size_t instructionCount { 0 };
+	mutable bool paused { true };
+
+	// -- recording
 	mutable bool isRecording { false };
 	// lets device know to diff everything first frame
 	mutable bool isRecordingFirstFrame { true };
 	mutable SnortFs::ReplayFileRecorder recordingFile { 0 };
+	mutable i32 targetInstructionOffset { 10 };
 };
 
 } // namespace snort

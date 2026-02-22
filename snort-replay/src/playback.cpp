@@ -20,6 +20,7 @@ struct FileInstruction {
 };
 
 struct FileData {
+	SnortCommonInterface commonInterface;
 	uint64_t instructionOffset;
 	std::vector<SnortMemoryRegionCreateInfo> regionCreateInfo;
 	std::vector<std::string> regionLabels;
@@ -60,6 +61,13 @@ SnortFs::ReplayFile SnortFs::replay_open(char const * const filepath) {
 	}
 
 	FileData fileData {};
+
+	// -- read common interface
+	{
+		uint64_t commonInterface;
+		fread(&commonInterface, 8, 1, filePtr);
+		fileData.commonInterface = (SnortCommonInterface)commonInterface;
+	}
 
 	// -- read instruction offset, instruction count and region count
 	fread(&fileData.instructionOffset, 8, 1, filePtr);
@@ -152,6 +160,13 @@ void SnortFs::replay_close(ReplayFile & file) {
 
 // --
 
+SnortCommonInterface SnortFs::replay_commonInterface(ReplayFile const file) {
+	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
+	return fileDataPtr->commonInterface;
+}
+
+// --
+
 uint64_t SnortFs::replay_instructionOffset(ReplayFile const file) {
 	FileData * fileDataPtr = (FileData *)(uintptr_t)(file.handle);
 	return fileDataPtr->instructionOffset;
@@ -215,11 +230,13 @@ SnortFs::MemoryRegionDiff * SnortFs::replay_instructionDiff(
 
 SnortFs::ReplayFileRecorder SnortFs::replayRecorder_open(
 	char const * const filepath,
+	SnortCommonInterface const commonInterface,
 	uint64_t const instructionOffset,
 	uint64_t const regionCount,
 	SnortMemoryRegionCreateInfo const * const regionCreateInfo
 ) {
 	FileData fileData {
+		.commonInterface = commonInterface,
 		.instructionOffset = instructionOffset,
 		.regionCreateInfo = std::vector<SnortMemoryRegionCreateInfo>(regionCount),
 		.regionLabels = std::vector<std::string>(regionCount),
@@ -282,6 +299,12 @@ void SnortFs::replayRecorder_close(ReplayFileRecorder & recorder) {
 	{
 		std::array<char, 8> magic = { 'S', 'N', 'O', 'R', 'T', 'R', 'P', 'L' };
 		fwrite(magic.data(), 1, 8, filePtr);
+	}
+
+	// -- write common interface
+	{
+		uint64_t commonInterface = (uint64_t)fileData.commonInterface;
+		fwrite(&commonInterface, 8, 1, filePtr);
 	}
 
 	// -- write instruction offset, instruction count and region count
@@ -372,13 +395,13 @@ void SnortFs::replayRecorder_recordInstruction(
 	);
 	instruction.regionDiffs[fileData.recordingRegionOffset].resize(diffCount);
 	for (size_t it = 0; it < diffCount; ++ it) {
+		std::vector<uint8_t> data;
+		data.resize(diffs[it].byteCount);
+		memcpy(data.data(), diffs[it].data, data.size());
 		instruction.regionDiffs[fileData.recordingRegionOffset][it] = {
 			.byteOffset = diffs[it].byteOffset,
 			.byteCount = diffs[it].byteCount,
-			.data = std::vector<uint8_t>(
-				diffs[it].data,
-				diffs[it].data + diffs[it].byteCount
-			),
+			.data = std::move(data),
 		};
 	}
 

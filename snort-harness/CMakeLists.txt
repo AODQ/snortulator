@@ -3,6 +3,7 @@ add_library(
 	STATIC
 	src/random.cpp
 	src/device.cpp
+	src/device-common.cpp
 )
 
 target_compile_options(

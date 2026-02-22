@@ -1,9 +1,11 @@
-#include <cstring>
 #include <snort/snort.h>
 
 #include <snort-harness/snort-harness.h>
 #include <snort-replay/fs.hpp>
 
+#include "imgui.h"
+
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -13,7 +15,7 @@
 		std::abort(); \
 	}
 
-void replayTests() {
+void replayTest1() {
 	// -- record
 	std::vector<SnortMemoryRegionCreateInfo> regionCreateInfo = {
 		{
@@ -32,6 +34,7 @@ void replayTests() {
 	SnortFs::ReplayFileRecorder file = (
 		SnortFs::replayRecorder_open(
 			"test-replay.rpl",
+			/*commonInterface=*/ kSnortCommonInterface_custom,
 			/*instructionOffset=*/ 0,
 			/*regionCount=*/ 2,
 			/*regionCreateInfo=*/ regionCreateInfo.data()
@@ -124,9 +127,67 @@ void replayTests() {
 	Assert(replayFile.handle == 0);
 }
 
+void replayTest2() {
+	// same as replayTest1 just different data, so it can be compared in
+	// the view
+	// -- record
+	std::vector<SnortMemoryRegionCreateInfo> regionCreateInfo = {
+		{
+			.dataType = kSnortDt_u8,
+			.elementCount = 8,
+			.elementDisplayRowStride = 2u,
+			.label = "region-registers",
+		},
+		{
+			.dataType = kSnortDt_u16,
+			.elementCount = 2,
+			.elementDisplayRowStride = 1u,
+			.label = "region-ram",
+		},
+	};
+	SnortFs::ReplayFileRecorder file = (
+		SnortFs::replayRecorder_open(
+			"test-replay-2.rpl",
+			/*commonInterface=*/ kSnortCommonInterface_custom,
+			/*instructionOffset=*/ 0,
+			/*regionCount=*/ 2,
+			/*regionCreateInfo=*/ regionCreateInfo.data()
+		)
+	);
+	Assert(file.handle != 0);
+
+	{
+		std::vector<SnortFs::MemoryRegionDiffRecord> diffs = {
+			{ .byteOffset = 0, .byteCount = 4, .data = (uint8_t const *)"noop" },
+			{ .byteOffset = 4, .byteCount = 4, .data = (uint8_t const *)"frik" },
+		};
+		SnortFs::replayRecorder_recordInstruction(file, 1, diffs.data());
+		SnortFs::replayRecorder_recordInstruction(file, 1, diffs.data()+1);
+	}
+	{
+		std::vector<SnortFs::MemoryRegionDiffRecord> diffs = {
+			{ .byteOffset = 2, .byteCount = 2, .data = (uint8_t const *)"no" },
+			{ .byteOffset = 2, .byteCount = 2, .data = (uint8_t const *)"ob" },
+		};
+		SnortFs::replayRecorder_recordInstruction(file, 1, diffs.data());
+		SnortFs::replayRecorder_recordInstruction(file, 1, diffs.data()+1);
+	}
+	{
+		std::vector<SnortFs::MemoryRegionDiffRecord> diffs = {
+			{ .byteOffset = 0, .byteCount = 2, .data = (uint8_t const *)"es" },
+			{ .byteOffset = 0, .byteCount = 2, .data = (uint8_t const *)"ta" },
+		};
+		SnortFs::replayRecorder_recordInstruction(file, 1, diffs.data());
+		SnortFs::replayRecorder_recordInstruction(file, 1, diffs.data()+1);
+	}
+	SnortFs::replayRecorder_close(file);
+	Assert(file.handle == 0);
+}
+
 int32_t main() {
 	// replay tests
-	replayTests();
+	replayTest1();
+	replayTest2();
 	// device creation
 	SnortDevice device = []() {
 		std::vector<SnortMemoryRegionCreateInfo> memoryRegions = {
@@ -152,8 +213,8 @@ int32_t main() {
 
 		SnortDeviceCreateInfo const deviceCreateInfo = {
 			.name = "snorter test device",
-			.memoryRegions = memoryRegions.data(),
 			.memoryRegionCount = memoryRegions.size(),
+			.memoryRegions = memoryRegions.data(),
 		};
 
 		return snort_deviceCreate(&deviceCreateInfo);
@@ -168,11 +229,35 @@ int32_t main() {
 
 	// main loop
 	while (!snort_shouldQuit(device)) {
+
+		bool const shouldRunFrame = (
+			snort_startFrame(
+				device,
+				(SnortMemoryRegion const []) {
+					{ registers.data() },
+					{ (u8 const *)memory.data() },
+					{ display.data() },
+				}
+			)
+		);
+
+		// -- test configs
+		static bool colorScheme = false;
+		ImGui::Begin("test configs");
+		ImGui::Checkbox("color scheme", &colorScheme);
+		ImGui::End();
+
 		// -- update registers
-		if (snort_startFrame(device)) {
-			registers[0] += 1;
-			registers[1] += 2;
-			registers[2] += 4;
+		if (shouldRunFrame) {
+			if (colorScheme) {
+				registers[0] += 7;
+				registers[1] += 4;
+				registers[2] += 4;
+			} else {
+				registers[0] += 1;
+				registers[1] += 2;
+				registers[2] += 4;
+			}
 
 			// -- update breathing texture
 			fc = (fc + fcDir);
@@ -180,27 +265,45 @@ int32_t main() {
 			for (size_t x = 0; x < 64; ++x)
 			for (size_t y = 0; y < 64; ++y) {
 				size_t index = (y * 64 + x) * 4;
-				display[index + 0] = ((x+fc) % 256);
-				display[index + 1] = ((y+fc) % 256);
-				display[index + 2] = ((x + y) % 256);
-				display[index + 3] = 255u;
+				if (!colorScheme) {
+					display[index + 0] = ((y+fc) % 256);
+					display[index + 1] = ((x+fc) % 256);
+					display[index + 2] = ((x + y) % 256);
+					display[index + 3] = 255;
+				}
+				else {
+					display[index + 0] = ((x+fc) % 256);
+					display[index + 1] = ((y+fc) % 256);
+					display[index + 2] = ((x + y) % 256);
+					if (x < 32 && y < 32) {
+						display[index + 3] = 255;
+					} else {
+						display[index + 3] = 255 - ((x+y) % 256);
+					}
+					if (x > 32 && y > 16) {
+						display[index + 1] = (y%3)*100;
+					}
+					display[index + 2] = (x%3)*50;
+
+					display[index + 3] = 255;
+				}
 			};
 
 			// -- update random memory
-			memory[0] = snort_rngU64(device);
-			memory[1] = snort_rngU64(device);
-			memory[2] = snort_rngU64(device);
-			memory[3] = snort_rngU64(device);
+			if (colorScheme) {
+				memory[0] = snort_rngU64(device);
+				memory[1] = snort_rngU64(device);
+				memory[2] = snort_rngU64(device);
+				memory[3] = snort_rngU64(device);
+			} else {
+				memory[3] = snort_rngU64(device);
+				memory[2] = snort_rngU64(device);
+				memory[2] = snort_rngU64(device);
+				memory[0] = snort_rngU64(device);
+			}
 		}
 
-		snort_endFrame(
-			device,
-			(SnortMemoryRegion const []) {
-				{ registers.data() },
-				{ (u8 const *)memory.data() },
-				{ display.data() },
-			}
-		);
+		snort_endFrame(device);
 	}
 
 	snort_deviceDestroy(&device);

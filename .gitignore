@@ -3,3 +3,5 @@ build/
 compile_commands.json
 external/
 install/
+rom-suite
+third-party-emulators/

@@ -82,6 +82,7 @@ SnortDevice snort_deviceCreate(
 ) {
 	snort::Device device = {
 		.name = std::string(ci->name),
+		.commonInterface = ci->commonInterface,
 		.currentMemoryRegion = {},
 	};
 
@@ -93,11 +94,16 @@ SnortDevice snort_deviceCreate(
 		auto const & regionCi = ci->memoryRegions[it];
 		size_t const width = regionCi.elementDisplayRowStride;
 		size_t const height = (
-			regionCi.elementCount / regionCi.elementDisplayRowStride
+			regionCi.elementDisplayRowStride == 0
+			? 1
+			: regionCi.elementCount / regionCi.elementDisplayRowStride
 		);
 		Image image {};
 		Texture2D texture {};
-		if (regionCi.dataType == kSnortDt_r8) {
+		if (
+			   regionCi.dataType == kSnortDt_r1
+			|| regionCi.dataType == kSnortDt_r8
+		) {
 			image = GenImageColor(width, height, BLACK);
 			texture = LoadTextureFromImage(image);
 		}
@@ -159,68 +165,16 @@ bool snort_shouldQuit([[maybe_unused]] SnortDevice const device)
 
 // --
 
-bool snort_startFrame(SnortDevice const deviceHandle)
+bool snort_startFrame(
+	SnortDevice const deviceHandle,
+	SnortMemoryRegion const * memoryRegions
+)
 {
 	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
 	snort_displayFrameBegin();
-	return !device.paused;
-}
-
-// --
-
-void snort_endFrame(
-	SnortDevice const deviceHandle,
-	SnortMemoryRegion const * memoryRegions
-) {
-	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
-
-	// -- imgui updates
-	{
-		ImGui::Begin("configuration");
-		ImGui::Checkbox("pause", &device.paused);
-		if (device.isRecording) {
-			if (ImGui::Button("Stop recording")) {
-				SnortFs::replayRecorder_close(device.recordingFile);
-				device.isRecording = false;
-			}
-		}
-		else if (ImGui::Button("Record")) {
-			// TODO file picker
-			char filepath[256];
-			snprintf(filepath, 256, "recording-%zu.rpl", time(NULL));
-			device.recordingFile = (
-				SnortFs::replayRecorder_open(
-					filepath,
-					/*instructionOffset=*/ device.instructionCount,
-					/*regionCount=*/ device.currentMemoryRegion.size(),
-					/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
-				)
-			);
-			if (device.recordingFile.handle == 0) {
-				printf("failed to start recording\n");
-			}
-			else {
-				device.isRecording = true;
-				device.isRecordingFirstFrame = true;
-				printf("started recording to file %s\n", filepath);
-			}
-		}
-		ImGui::End();
-	}
-
-	// -- pause check
-	if (device.paused) {
-		snort_displayMemory(
-			device.currentMemoryRegion.size(),
-			device.memoryRegionCreateInfo.data(),
-			(u8 const * const *)memoryRegions
-		);
-		snort_displayFrameEnd();
-		return;
-	}
 
 	// -- recording
-	if (device.isRecording) {
+	if (!device.paused && device.isRecording) {
 		// -- full frame memory
 		if (device.isRecordingFirstFrame) {
 			for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
@@ -246,7 +200,6 @@ void snort_endFrame(
 		}
 	}
 
-
 	// -- then store actual frame memory
 	for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
 		auto & regionInfo = device.currentMemoryRegion[it];
@@ -258,12 +211,86 @@ void snort_endFrame(
 		);
 	}
 
-	// -- display
 	snort_displayMemory(
+		device.commonInterface,
 		device.currentMemoryRegion.size(),
 		device.memoryRegionCreateInfo.data(),
-		(u8 const * const *)memoryRegions
+		(u8 const * const *)memoryRegions,
+		nullptr
 	);
+
+	return !device.paused;
+}
+
+// --
+
+void snort_endFrame(SnortDevice const deviceHandle) {
+	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
+
+	// -- imgui updates
+	{
+		ImGui::Begin("configuration");
+		ImGui::Checkbox("pause", &device.paused);
+		if (device.isRecording) {
+			ImGui::Text("recording...");
+		}
+		else if (device.instructionCount == 0u) {
+			// allow user to start recording on first frame, for now
+			// in future they can pick an offset and total count
+			ImGui::SliderInt(
+				"target instruction offset",
+				&device.targetInstructionOffset,
+				0,
+				100'000
+			);
+			if (ImGui::Button("Record")) {
+				// TODO file picker
+				char filepath[256];
+				snprintf(filepath, 256, "recording-%zu.rpl", time(NULL));
+				device.recordingFile = (
+					SnortFs::replayRecorder_open(
+						filepath,
+						/*commonInterface=*/ device.commonInterface,
+						/*instructionOffset=*/ device.instructionCount,
+						/*regionCount=*/ device.currentMemoryRegion.size(),
+						/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
+					)
+				);
+				if (device.recordingFile.handle == 0) {
+					printf("failed to start recording\n");
+				}
+				else {
+					device.isRecording = true;
+					device.isRecordingFirstFrame = true;
+					printf("started recording to file %s\n", filepath);
+				}
+				device.paused = false;
+			}
+		}
+		ImGui::End();
+	}
+
+	// -- pause check
+	if (device.paused) {
+		snort_displayFrameEnd();
+		return;
+	}
+
+	// -- close if reached target instruction offset
+	if (
+		device.isRecording
+		&& device.instructionCount >= (size_t)device.targetInstructionOffset
+	) {
+		SnortFs::replayRecorder_close(device.recordingFile);
+		device.isRecording = false;
+		printf(
+			"stopped recording at instruction offset %zu\n",
+			device.instructionCount
+		);
+		device.paused = true;
+	}
+
+	// -- display
 	snort_displayFrameEnd();
 
 	// -- increment instruction count

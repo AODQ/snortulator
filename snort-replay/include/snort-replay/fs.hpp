@@ -10,6 +10,7 @@
 /*
 	Format:
 	- magic number (8 bytes)
+	- common interface (8 bytes)
 	- instruction offset (8 bytes)
 	- instruction count (8 bytes)
 	- region count (8 bytes)
@@ -44,6 +45,7 @@ namespace SnortFs {
 	ReplayFile replay_open(char const * const filepath);
 	void replay_close(ReplayFile & file);
 
+	SnortCommonInterface replay_commonInterface(ReplayFile const file);
 	uint64_t replay_instructionOffset(ReplayFile const file);
 	uint64_t replay_instructionCount(ReplayFile const file);
 	uint64_t replay_regionCount(ReplayFile const file);
@@ -70,6 +72,7 @@ namespace SnortFs {
 
 	ReplayFileRecorder replayRecorder_open(
 		char const * const filepath,
+		SnortCommonInterface const commonInterface,
 		uint64_t const instructionOffset,
 		uint64_t const regionCount,
 		SnortMemoryRegionCreateInfo const * regionCreateInfo

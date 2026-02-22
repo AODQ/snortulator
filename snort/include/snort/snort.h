@@ -57,7 +57,9 @@ enum SnortDt {
   kSnortDt_i32,
   kSnortDt_i64,
   kSnortDt_f32,
-  // imadata type
+  kSnortDt_string,
+  // image data type
+  kSnortDt_r1,
   kSnortDt_r8,
   kSnortDt_rgba8,
 };
@@ -71,4 +73,16 @@ struct SnortMemoryRegionCreateInfo {
 	// elements to display per row, 0=flag
 	size_t elementDisplayRowStride;
 	char const * label;
+};
+
+enum SnortCommonInterface {
+	kSnortCommonInterface_chip8,
+	kSnortCommonInterface_custom,
+};
+
+struct SnortDeviceCreateInfo {
+	char const * name;
+	SnortCommonInterface commonInterface;
+	size_t memoryRegionCount;
+	SnortMemoryRegionCreateInfo const * memoryRegions;
 };

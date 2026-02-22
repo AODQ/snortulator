@@ -2,6 +2,7 @@ add_library(
 	snort-ui
 	STATIC
 	src/ui.cpp
+	src/ui-chip8.cpp
 )
 
 target_compile_options(

@@ -14,9 +14,11 @@ void snort_displayFrameBegin();
 void snort_displayFrameEnd();
 
 void snort_displayMemory(
+	SnortCommonInterface commonInterface,
 	size_t regions,
 	SnortMemoryRegionCreateInfo const * regionInfo,
-	u8 const * const * regionData
+	u8 const * const * regionData,
+	u8 const * const * optRegionDataCmp
 );
 
 #ifdef __cplusplus

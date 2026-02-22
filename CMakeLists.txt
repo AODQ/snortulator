@@ -67,6 +67,10 @@ add_subdirectory(snort-view)
 
 # suite
 add_subdirectory(suite/unit-tests)
+add_subdirectory(suite/chip8)
+
+# third party emulators
+add_subdirectory(third-party-emulators/chip8/james-griffin)
 
 ## emulators
 #add_subdirectory(emulators/chip-8)

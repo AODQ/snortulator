@@ -20,24 +20,25 @@ namespace instr {
 		return 0u;
 	}
 	u16 iCall(Device & device, u16 const address) {
-		device.stack[device.stackPointer++] = device.programCounter + 2u;
+		device.stack[device.stackPointer] = device.programCounter;
+		++device.stackPointer;
 		device.programCounter = address;
 		return 0u;
 	}
 	u16 iIfRegNeqNN(Device & device, u8 const reg, u8 const value) {
-		if (device.registers[reg] == value) {
-			return 4u;
-		}
-		return 2u;
-	}
-	u16 iIfRegEqNN(Device & device, u8 const reg, u8 const value) {
 		if (device.registers[reg] != value) {
 			return 4u;
 		}
 		return 2u;
 	}
+	u16 iIfRegEqNN(Device & device, u8 const reg, u8 const value) {
+		if (device.registers[reg] == value) {
+			return 4u;
+		}
+		return 2u;
+	}
 	u16 iIfRegNeqReg(Device & device, u8 const regX, u8 const regY) {
-		if (device.registers[regX] == device.registers[regY]) {
+		if (device.registers[regX] != device.registers[regY]) {
 			return 4u;
 		}
 		return 2u;
@@ -114,7 +115,28 @@ namespace instr {
 	u16 iDrawSprite(
 		Device & device, u8 const regX, u8 const regY, u8 const height
 	) {
-		// TODO
+		u8 const offsetX = device.registers[regX];
+		u8 const offsetY = device.registers[regY];
+		// reset collision flag
+		device.registers[0xFu] = 0u;
+		for (u16 it = 0u; it < height*8u; ++ it) {
+			u16 const col = it % 8u;
+			u16 const row = it / 8u;
+			u8 const spriteByte = device.memory[device.registerIndex + row];
+			bool const spritePixelOn = (spriteByte & (0x80u >> col)) != 0u;
+			if (!spritePixelOn) {
+				continue;
+			}
+			u16 const displayX = (offsetX + col) % 64u;
+			u16 const displayY = (offsetY + row) % 32u;
+			u16 const displayIndex = displayY * 64u + displayX;
+			// check pixel collision
+			if (device.display[displayIndex]) {
+				device.registers[0xFu] = 1u;
+			}
+			// xor pixel
+			device.display[displayIndex] ^= 1u;
+		}
 		return 2u;
 	}
 	u16 iSkipIfKeyPressed(Device & device, u8 const reg) {
@@ -148,15 +170,21 @@ namespace instr {
 		device.memory[device.registerIndex + 2u] = value % 10u;
 		return 2u;
 	}
-	u16 iIndexLoadRegs(Device & device, u8 const reg) {
+	u16 iLoadMemoryFromRegs(Device & device, u8 const reg) {
 		for (u16 it = 0u; it <= reg; ++it) {
 			device.memory[device.registerIndex + it] = device.registers[it];
 		}
+		if constexpr (SnortChip8Config::indexIncrementsOnRegLoadReg) {
+			device.registerIndex += reg + 1u;
+		}
 		return 2u;
 	}
-	u16 iIndexStoreRegs(Device & device, u8 const reg) {
+	u16 iLoadRegsFromMemory(Device & device, u8 const reg) {
 		for (u16 it = 0u; it <= reg; ++it) {
 			device.registers[it] = device.memory[device.registerIndex + it];
+		}
+		if constexpr (SnortChip8Config::indexIncrementsOnRegLoadReg) {
+			device.registerIndex += reg + 1u;
 		}
 		return 2u;
 	}
@@ -296,7 +324,7 @@ static u8 device_processInstr(Device & device){
 			}
 			break;
 		case 0xA:
-			return instr::iJump(device, opcode & 0x0FFFu);
+			return instr::iIndexLoad(device, opcode & 0x0FFFu);
 		case 0xB:
 			return instr::iJumpWithRegOffset(device, opcode & 0x0FFFu);
 		case 0xC:
@@ -330,10 +358,10 @@ static u8 device_processInstr(Device & device){
 				return instr::iIndexLoadBcdOfReg(device, msb1);
 			}
 			if (msb2 == 0x5u && msb3 == 0x5u) { // 55
-				return instr::iIndexLoadRegs(device, msb1);
+				return instr::iLoadMemoryFromRegs(device, msb1);
 			}
 			if (msb2 == 0x6u && msb3 == 0x5u) { // 65
-				return instr::iIndexStoreRegs(device, msb1);
+				return instr::iLoadRegsFromMemory(device, msb1);
 			}
 		break;
 	}

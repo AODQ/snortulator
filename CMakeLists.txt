@@ -60,6 +60,7 @@ target_link_libraries(imguifiledialog PUBLIC imgui)
 add_subdirectory(snort)
 add_subdirectory(snort-harness)
 add_subdirectory(snort-replay)
+add_subdirectory(snort-compare)
 add_subdirectory(snort-ui)
 
 # snort view
@@ -70,7 +71,7 @@ add_subdirectory(suite/unit-tests)
 add_subdirectory(suite/chip8)
 
 # third party emulators
-add_subdirectory(third-party-emulators/chip8/james-griffin)
+add_subdirectory(third-party-emulators/james-griffen-cp)
 
 ## emulators
 #add_subdirectory(emulators/chip-8)

@@ -12,7 +12,11 @@ struct SnortDevice { u64 handle; };
 // -- snort common harness interfaces ------------------------------------------
 // -----------------------------------------------------------------------------
 
-SnortDevice snort_deviceCreateFromCommon(SnortCommonInterface const type);
+SnortDevice snort_deviceCreateFromCommon(
+	SnortCommonInterface const type,
+	char const * const customLabel,
+	char const * const romPath
+);
 
 // -----------------------------------------------------------------------------
 // -- snort harness frame processing -------------------------------------------
@@ -28,9 +32,22 @@ struct SnortMemoryRegion {
 
 bool snort_shouldQuit(SnortDevice const device);
 
-// returns true if the frame should be processed. If this is false, then do
-//   not process the frame.
-bool snort_startFrame(
+// returns the number of frames that should be processed.
+// User must call snort_updateFrame for the number of frames returned, followed
+//   by a call to snort_endFrame.
+// The code should look like this:
+//   u64 framesToRun = snort_startFrame(device, memoryRegions);
+//   for (u64 it = 0; it < framesToRun; ++ it) {
+//     snort_updateFrame(device, memoryRegions);
+//     myDevice.processFrame();
+//   }
+//   snort_endFrame(device);
+u64 snort_startFrame(
+	SnortDevice const device,
+	SnortMemoryRegion const * memoryRegions
+);
+
+void snort_updateFrame(
 	SnortDevice const device,
 	SnortMemoryRegion const * memoryRegions
 );

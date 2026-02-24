@@ -7,37 +7,44 @@
 #include "imgui.h"
 
 #include <cstdio>
+#include <vector>
 
 int32_t main(int32_t const argc, char const * const argv[]) {
-	SnortDevice snortDevice = (
-		snort_deviceCreateFromCommon(kSnortCommonInterface_chip8)
-	);
-	ImGui::GetIO().IniFilename = "imgui-chip8.ini";
 
 	if (argc < 2) {
 		printf("usage: %s <rom path>\n", argv[0]);
 		return 1;
 	}
 
+	SnortDevice snortDevice = (
+		snort_deviceCreateFromCommon(
+			kSnortCommonInterface_chip8,
+			"snort-chip8",
+			argv[1]
+		)
+	);
+	ImGui::GetIO().IniFilename = "imgui-chip8.ini";
+
 	Device device = device_initialize(argv[1], snortDevice);
 
+	// the memory addresses don't change so can fetch and reuse
+	auto const memoryRegions = std::vector<SnortMemoryRegion> {
+		{ device.memory },
+		{ (u8 *)device.stack },
+		{ device.registers },
+		{ (u8 *)&device.registerIndex },
+		{ (u8 *)&device.programCounter },
+		{ (u8 *)&device.stackPointer },
+		{ device.display },
+	};
+
 	while (!snort_shouldQuit(snortDevice)) {
-		bool const shouldRunFrame = (
-			snort_startFrame(
-				snortDevice,
-				(SnortMemoryRegion const []) {
-					{ device.memory },
-					{ (u8 *)device.stack },
-					{ device.registers },
-					{ (u8 *)&device.registerIndex },
-					{ (u8 *)&device.programCounter },
-					{ (u8 *)&device.stackPointer },
-					{ device.display },
-				}
-			)
+		u64 const framesToRun = (
+			snort_startFrame(snortDevice, memoryRegions.data())
 		);
 
-		if (shouldRunFrame) {
+		for (u64 it = 0; it < framesToRun; ++ it) {
+			snort_updateFrame(snortDevice, memoryRegions.data());
 			device_cpuStep(device);
 		}
 

@@ -1,17 +1,17 @@
 add_executable(
-	chip8
+	chip8-snort
 	src/device.cpp
 	src/source.cpp
 )
 
 target_compile_options(
-	chip8
+	chip8-snort
 	PRIVATE
 		-Wall
 )
 
 target_link_libraries(
-	chip8
+	chip8-snort
 	PUBLIC
 		snort
 		snort-replay
@@ -20,6 +20,6 @@ target_link_libraries(
 
 # install
 install(
-	TARGETS chip8
+	TARGETS chip8-snort
 	RUNTIME DESTINATION bin
 )

@@ -1,5 +1,7 @@
 #include "device.hpp"
 
+#include "tomlplusplus.hpp"
+
 #include <ctime>
 #include <snort/snort-ui.h>
 
@@ -80,8 +82,12 @@ void storeFrameDelta(
 SnortDevice snort_deviceCreate(
 	SnortDeviceCreateInfo const * const ci
 ) {
+	printf("recording file path: %s\n", ci->recordingFilepath);
+
+	// -- load device
 	snort::Device device = {
 		.name = std::string(ci->name),
+		.recordingFilepath = std::string(ci->recordingFilepath),
 		.commonInterface = ci->commonInterface,
 		.currentMemoryRegion = {},
 	};
@@ -138,6 +144,31 @@ SnortDevice snort_deviceCreate(
 		});
 	}
 
+	// -- load config options
+	if (ci->configPath != nullptr) {
+		toml::table configTable = toml::parse_file(ci->configPath);
+		if (configTable["start-recording"].value_or(false)) {
+			device.isRecording = true;
+			device.isRecordingFirstFrame = true;
+			device.paused = false;
+			device.recordingFile = (
+				SnortFs::replayRecorder_open(
+					device.recordingFilepath.c_str(),
+					/*commonInterface=*/ device.commonInterface,
+					/*instructionOffset=*/ device.instructionCount,
+					/*regionCount=*/ device.currentMemoryRegion.size(),
+					/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
+				)
+			);
+		}
+		if (configTable["close-once-done-recording"].value_or(false)) {
+			device.closeOnceDoneRecording = true;
+		}
+		device.targetInstructionCount = (
+			configTable["target-instruction-count"].value_or(10)
+		);
+	}
+
 	return SnortDevice {
 		.handle = (u64)(uintptr_t)(new snort::Device(std::move(device)))
 	};
@@ -160,12 +191,16 @@ void snort_deviceDestroy(
 
 bool snort_shouldQuit([[maybe_unused]] SnortDevice const device)
 {
+	snort::Device * devPtr = (snort::Device *)(uintptr_t)(device.handle);
+	if (devPtr->closeOnceDoneRecording && !devPtr->isRecording) {
+		return true;
+	}
 	return WindowShouldClose();
 }
 
 // --
 
-bool snort_startFrame(
+u64 snort_startFrame(
 	SnortDevice const deviceHandle,
 	SnortMemoryRegion const * memoryRegions
 )
@@ -173,8 +208,55 @@ bool snort_startFrame(
 	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
 	snort_displayFrameBegin();
 
+	// -- then store actual frame memory
+	for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
+		auto & regionInfo = device.currentMemoryRegion[it];
+		auto & referenceData = memoryRegions[it].data;
+		memcpy(
+			regionInfo.currentData.data(),
+			referenceData,
+			regionInfo.byteCount
+		);
+	}
+
+	snort_displayMemory(
+		device.commonInterface,
+		device.currentMemoryRegion.size(),
+		device.memoryRegionCreateInfo.data(),
+		(u8 const * const *)memoryRegions,
+		nullptr
+	);
+
+	// -- return number of frames to run
+	if (device.paused) {
+		return 0u;
+	}
+	if (device.step) {
+		device.step = false;
+		return 1u;
+	}
+	if (device.isRecording) {
+		return 100u;
+	}
+	return 1u;
+}
+
+// --
+
+void snort_updateFrame(
+	SnortDevice const deviceHandle,
+	SnortMemoryRegion const * memoryRegions
+) {
+	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
+
 	// -- recording
 	if (!device.paused && device.isRecording) {
+		// if reached target instruction offset, return
+		if (
+			device.instructionCount >= (size_t)device.targetInstructionCount
+		) {
+			return;
+		}
 		// -- full frame memory
 		if (device.isRecordingFirstFrame) {
 			for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
@@ -200,26 +282,8 @@ bool snort_startFrame(
 		}
 	}
 
-	// -- then store actual frame memory
-	for (size_t it = 0; it < device.currentMemoryRegion.size(); ++ it) {
-		auto & regionInfo = device.currentMemoryRegion[it];
-		auto & referenceData = memoryRegions[it].data;
-		memcpy(
-			regionInfo.currentData.data(),
-			referenceData,
-			regionInfo.byteCount
-		);
-	}
-
-	snort_displayMemory(
-		device.commonInterface,
-		device.currentMemoryRegion.size(),
-		device.memoryRegionCreateInfo.data(),
-		(u8 const * const *)memoryRegions,
-		nullptr
-	);
-
-	return !device.paused;
+	// -- increment instruction count
+	++ device.instructionCount;
 }
 
 // --
@@ -227,29 +291,38 @@ bool snort_startFrame(
 void snort_endFrame(SnortDevice const deviceHandle) {
 	auto & device = *(snort::Device *)(uintptr_t)(deviceHandle.handle);
 
+	if (device.step) {
+		// if stepping, pause after one frame
+		device.paused = true;
+	}
 	// -- imgui updates
 	{
 		ImGui::Begin("configuration");
 		ImGui::Checkbox("pause", &device.paused);
+		ImGui::SameLine();
+		if (ImGui::Button("step")) {
+			device.paused = false;
+			device.step = true;
+		}
 		if (device.isRecording) {
-			ImGui::Text("recording...");
+			ImGui::Text(
+				"recording, %zu / %d",
+				device.instructionCount,
+				device.targetInstructionCount
+			);
 		}
 		else if (device.instructionCount == 0u) {
 			// allow user to start recording on first frame, for now
 			// in future they can pick an offset and total count
-			ImGui::SliderInt(
-				"target instruction offset",
-				&device.targetInstructionOffset,
-				0,
-				100'000
+			ImGui::Text("target instruction offset");
+			ImGui::InputInt(
+				"##target instruction offset",
+				&device.targetInstructionCount
 			);
 			if (ImGui::Button("Record")) {
-				// TODO file picker
-				char filepath[256];
-				snprintf(filepath, 256, "recording-%zu.rpl", time(NULL));
 				device.recordingFile = (
 					SnortFs::replayRecorder_open(
-						filepath,
+						device.recordingFilepath.c_str(),
 						/*commonInterface=*/ device.commonInterface,
 						/*instructionOffset=*/ device.instructionCount,
 						/*regionCount=*/ device.currentMemoryRegion.size(),
@@ -262,7 +335,6 @@ void snort_endFrame(SnortDevice const deviceHandle) {
 				else {
 					device.isRecording = true;
 					device.isRecordingFirstFrame = true;
-					printf("started recording to file %s\n", filepath);
 				}
 				device.paused = false;
 			}
@@ -279,7 +351,7 @@ void snort_endFrame(SnortDevice const deviceHandle) {
 	// -- close if reached target instruction offset
 	if (
 		device.isRecording
-		&& device.instructionCount >= (size_t)device.targetInstructionOffset
+		&& device.instructionCount >= (size_t)device.targetInstructionCount
 	) {
 		SnortFs::replayRecorder_close(device.recordingFile);
 		device.isRecording = false;
@@ -292,7 +364,4 @@ void snort_endFrame(SnortDevice const deviceHandle) {
 
 	// -- display
 	snort_displayFrameEnd();
-
-	// -- increment instruction count
-	++ device.instructionCount;
 }

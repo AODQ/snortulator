@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <snort/snort-ui.h>
 
 namespace gui {
@@ -15,16 +16,17 @@ static void displayDeviceChip8Memory(
 	size_t regions,
 	SnortMemoryRegionCreateInfo const * regionInfo,
 	u8 const * const * regionData
+
 ) {
 	// -- fetch memory
 	// these need to map to device-common.cpp
-	auto & memory = regionData[0];
-	auto & programCounter = regionData[4];
+	u8 const * memory = regionData[0];
+	u16 & programCounter = *(u16 *)regionData[4];
 
 	// -- fetch opcode
-	u16 opcode = (
-		  (u16)(memory[programCounter[0]] << 8)
-		| (u16)(memory[programCounter[0] + 1u])
+	u16 const opcode = (
+		  (u16)(memory[programCounter] << 8)
+		| (u16)(memory[programCounter + 1u])
 	);
 
 	// -- decode and execute
@@ -187,13 +189,13 @@ static void displayDeviceChip8Memory(
 			}
 			else if (msb2 == 0x5u && msb3 == 0x5u) { // 55
 				ImGui::Text(
-					"store registers V0 through V%X in memory starting at I",
+					"load memory from registers V0 through V%X at I",
 					msb1
 				);
 			}
 			else if (msb2 == 0x6u && msb3 == 0x5u) { // 65
 				ImGui::Text(
-					"read registers V0 through V%X from memory starting at I",
+					"load V0 through V%X from memory starting at I",
 					msb1
 				);
 			}
@@ -214,10 +216,10 @@ void gui::displayDeviceChip8(
 ) {
 	ImGui::Begin("instruction info");
 
-	ImGui::Text("-- primary replay instruction decode --");
+	ImGui::Text("-- primary replay next-instruction decode --");
 	displayDeviceChip8Memory(regions, regionInfo, regionData);
 	if (optRegionDataCmp) {
-		ImGui::Text("-- secondary replay instruction decode --");
+		ImGui::Text("-- secondary replay next-instruction decode --");
 		displayDeviceChip8Memory(regions, regionInfo, optRegionDataCmp);
 	}
 

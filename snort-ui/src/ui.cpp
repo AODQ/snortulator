@@ -235,7 +235,7 @@ void gui::displayMemoryTexture(
 ) {
 	struct ImageInfo {
 		float zoom {1.0};
-		bool compareMode {false};
+		bool compareMode {true};
 	};
 	static std::unordered_map<std::string, ImageInfo> imageInfoMap;
 	auto & imageInfo = imageInfoMap[regionInfo.label];
@@ -257,11 +257,18 @@ void gui::displayMemoryTexture(
 		for (int x = 0; x < image.image.width; ++ x) {
 			size_t index = y * image.image.width + x;
 			u8 const value = regionData[index];
-			// comparison mode doesn't matter
 			((u8 *)image.image.data)[index * 4 + 0] = value*255u;
 			((u8 *)image.image.data)[index * 4 + 1] = value*255u;
 			((u8 *)image.image.data)[index * 4 + 2] = value*255u;
 			((u8 *)image.image.data)[index * 4 + 3] = 255u;
+			if (imageInfo.compareMode && optRegionDataCmp != nullptr) {
+				u8 cmpValue = optRegionDataCmp[index];
+				if (value != cmpValue) {
+					((u8 *)image.image.data)[index * 4 + 0] = 255u;
+					((u8 *)image.image.data)[index * 4 + 1] = 0u;
+					((u8 *)image.image.data)[index * 4 + 2] = 0u;
+				}
+			}
 		};
 		UpdateTexture(image.texture, image.image.data);
 	}
@@ -271,15 +278,15 @@ void gui::displayMemoryTexture(
 		for (int x = 0; x < image.image.width; ++ x) {
 			size_t index = y * image.image.width + x;
 			u8 value = regionData[index];
+			((u8 *)image.image.data)[index * 4 + 0] = value;
+			((u8 *)image.image.data)[index * 4 + 1] = value;
+			((u8 *)image.image.data)[index * 4 + 2] = value;
+			((u8 *)image.image.data)[index * 4 + 3] = 255u;
 			if (imageInfo.compareMode && optRegionDataCmp != nullptr) {
 				u8 cmpValue = optRegionDataCmp[index];
 				value = fabsf((float)value - (float)cmpValue)*10.0f;
 				value = (value > 255 ? 255 : value);
 			}
-			((u8 *)image.image.data)[index * 4 + 0] = value;
-			((u8 *)image.image.data)[index * 4 + 1] = value;
-			((u8 *)image.image.data)[index * 4 + 2] = value;
-			((u8 *)image.image.data)[index * 4 + 3] = 255u;
 		};
 		UpdateTexture(image.texture, image.image.data);
 	}

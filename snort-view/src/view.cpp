@@ -1,5 +1,7 @@
 #include <snort-replay/fs.hpp>
 
+#include <snort-replay/validation.hpp>
+
 #include <snort/snort-ui.h>
 
 #include <ImGuiFileDialog.h>
@@ -17,6 +19,7 @@ static ReplayFile sOpenReplay { .file = {.handle = 0} };
 static ReplayFile sOpenReplayCmp { .file = {.handle = 0} };
 static bool sIsComparisonFlip { false };
 static size_t sReplayInstructionIndex { 0 };
+
 
 // -----------------------------------------------------------------------------
 
@@ -142,6 +145,38 @@ void displayReplayFile(ReplayFile const & replay, ReplayFile & replayCmp) {
 		0,
 		(int)(SnortFs::replay_instructionCount(replay.file) - 1)
 	);
+	if (ImGui::Button("<") && sReplayInstructionIndex > 0) {
+		-- sReplayInstructionIndex;
+	}
+	ImGui::SameLine();
+	size_t const instrCount = SnortFs::replay_instructionCount(replay.file);
+	if (ImGui::Button(">") && sReplayInstructionIndex+1 < instrCount) {
+		++ sReplayInstructionIndex;
+	}
+
+	// validate all memory
+	static size_t invalidFrame = ~0u;
+	// static i32 invalidFrameDuration = 0;
+	if (replayCmp.file.handle != 0 && ImGui::Button("validate all memory")) {
+		invalidFrame = SnortFs::validateMemory(replay.file, replayCmp.file);
+		// invalidFrameDuration = 120;
+		ImGui::OpenPopup("validation result");
+	}
+	if (ImGui::BeginPopup("validation result")) {
+		ImGui::Text("validation result:");
+		if (invalidFrame == ~0u) {
+			ImGui::Text("all frames valid");
+		}
+		else {
+			ImGui::Text("first invalid frame: %zu", invalidFrame);
+			if (ImGui::Button("go to invalid frame")) {
+				sReplayInstructionIndex = invalidFrame;
+				ImGui::CloseCurrentPopup();
+			}
+		}
+		ImGui::EndPopup();
+	}
+
 	// -- display this replay's filename
 	ImGui::Text("primary replay file:");
 	ImGui::TextWrapped("%s", replay.filepath.c_str());
@@ -175,8 +210,8 @@ void displayReplayFile(ReplayFile const & replay, ReplayFile & replayCmp) {
 			ImGui::Text(
 				"diff %zu: offset %zu, count %zu",
 				diffIt,
-				diffs[diffIt].byteOffset,
-				diffs[diffIt].byteCount
+				(size_t)diffs[diffIt].byteOffset,
+				(size_t)diffs[diffIt].byteCount
 			);
 		}
 	}

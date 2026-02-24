@@ -5,6 +5,14 @@
 
 #include <string>
 
+// these are some constexpr/compile-time configs that can differ between
+// implementations
+namespace SnortChip8Config {
+	// the original implementation does not increment the index register,
+	//   this comes from 'cowgod' reference that many emulators follow
+	constexpr bool indexIncrementsOnRegLoadReg { true };
+}
+
 struct Device {
 	u8 memory[4096u];
 	u16 stack[16u];

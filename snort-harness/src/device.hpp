@@ -31,6 +31,7 @@ struct MemoryRegionInfo {
 
 struct Device {
 	std::string const name;
+	std::string const recordingFilepath;
 	SnortCommonInterface commonInterface { kSnortCommonInterface_custom };
 	std::vector<MemoryRegionInfo> currentMemoryRegion;
 	std::vector<SnortMemoryRegionCreateInfo> memoryRegionCreateInfo;
@@ -39,13 +40,15 @@ struct Device {
 	u64 rngSeed { 1234u };
 	size_t instructionCount { 0 };
 	mutable bool paused { true };
+	mutable bool step { false };
 
 	// -- recording
 	mutable bool isRecording { false };
 	// lets device know to diff everything first frame
 	mutable bool isRecordingFirstFrame { true };
 	mutable SnortFs::ReplayFileRecorder recordingFile { 0 };
-	mutable i32 targetInstructionOffset { 10 };
+	mutable i32 targetInstructionCount { 10 };
+	mutable bool closeOnceDoneRecording { false };
 };
 
 } // namespace snort

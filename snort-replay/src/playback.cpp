@@ -1,5 +1,7 @@
 #include <snort-replay/fs.hpp>
 
+#include <snort-replay/validation.hpp>
+
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -419,4 +421,50 @@ void SnortFs::replayRecorder_recordInstruction(
 			SnortFs::replayRecorder_close(recorder);
 		}
 	}
+}
+
+size_t SnortFs::validateMemory(ReplayFile const & replay, ReplayFile & replayCmp) {
+	size_t const regionCount = SnortFs::replay_regionCount(replay);
+	size_t const instrCount = SnortFs::replay_instructionCount(replay);
+	size_t const cmpRegionCount = SnortFs::replay_regionCount(replayCmp);
+	size_t const cmpInstrCount = SnortFs::replay_instructionCount(replayCmp);
+	if (regionCount != cmpRegionCount || instrCount != cmpInstrCount) {
+		printf(
+			"replay files have different region count or instruction count, "
+			"replay: %zu regions, %zu instructions, "
+			"replayCmp: %zu regions, %zu instructions\n",
+			regionCount, instrCount, cmpRegionCount, cmpInstrCount
+		);
+		return 0;
+	}
+	for (size_t instrIt = 0u; instrIt < instrCount; ++ instrIt)
+	for (size_t regionIt = 0u; regionIt < regionCount; ++ regionIt) {
+		size_t const diffCount = (
+			SnortFs::replay_instructionDiffCount(replay, instrIt, regionIt)
+		);
+		size_t const diffCountCmp = (
+			SnortFs::replay_instructionDiffCount(replayCmp, instrIt, regionIt)
+		);
+		if (diffCount != diffCountCmp) {
+			return instrIt;
+		}
+		SnortFs::MemoryRegionDiff const * diffs = (
+			SnortFs::replay_instructionDiff(replay, instrIt, regionIt)
+		);
+		SnortFs::MemoryRegionDiff const * diffsCmp = (
+			SnortFs::replay_instructionDiff(replayCmp, instrIt, regionIt)
+		);
+		for (size_t diffIt = 0; diffIt < diffCount; ++ diffIt) {
+			SnortFs::MemoryRegionDiff const & diff = diffs[diffIt];
+			SnortFs::MemoryRegionDiff const & diffCmp = diffsCmp[diffIt];
+			if (
+				   diff.byteOffset != diffCmp.byteOffset
+				|| diff.byteCount != diffCmp.byteCount
+				|| memcmp(diff.data, diffCmp.data, diff.byteCount) != 0
+			) {
+				return instrIt;
+			}
+		}
+	};
+	return ~0u;
 }

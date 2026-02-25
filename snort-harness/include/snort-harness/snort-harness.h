@@ -16,7 +16,7 @@ SnortDevice snort_deviceCreateFromCommon(
 	SnortCommonInterface const type,
 	char const * const customLabel,
 	char const * const romPath,
-	int32_t const argc,
+	i32 const argc,
 	char const * const * const argv
 );
 

@@ -1,10 +1,11 @@
 #include "device.hpp"
 
+#include "cxxopts.hpp"
+
 #include <ctime>
 #include <snort/snort-ui.h>
 
 #include <cstring>
-#include <string_view>
 
 namespace {
 
@@ -78,6 +79,63 @@ void storeFrameDelta(
 
 // --
 
+namespace {
+
+void parseCommandLineArgs(
+	snort::Device & device,
+	SnortDeviceCreateInfo const * const ci
+) {
+	cxxopts::Options options("snort-harness");
+	options.add_options()
+		(
+			"start-recording",
+			"start recording immediately",
+			cxxopts::value<bool>()->default_value("false")
+		)
+		(
+			"target-instruction-count",
+			"number of instructions to record",
+			cxxopts::value<i32>()->default_value("10")
+		)
+		(
+			"close-once-done-recording",
+			"close emulator once recording finishes",
+			cxxopts::value<bool>()->default_value("false")
+		)
+	;
+	options.allow_unrecognised_options();
+
+	auto const result = (
+		options.parse(ci->argc, ci->argv)
+	);
+
+	device.targetInstructionCount = (
+		result["target-instruction-count"].as<i32>()
+	);
+	device.closeOnceDoneRecording = (
+		result["close-once-done-recording"].as<bool>()
+	);
+
+	if (!result["start-recording"].as<bool>()) { return; }
+
+	device.isRecording = true;
+	device.isRecordingFirstFrame = true;
+	device.paused = false;
+	device.recordingFile = (
+		SnortFs::replayRecorder_open(
+			device.recordingFilepath.c_str(),
+			/*commonInterface=*/ device.commonInterface,
+			/*instructionOffset=*/ device.instructionCount,
+			/*regionCount=*/ device.currentMemoryRegion.size(),
+			/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
+		)
+	);
+}
+
+} // namespace
+
+// --
+
 SnortDevice snort_deviceCreate(
 	SnortDeviceCreateInfo const * const ci
 ) {
@@ -144,41 +202,7 @@ SnortDevice snort_deviceCreate(
 	}
 
 	// -- parse command line args
-	for (int32_t it = 1; it < ci->argc; ++ it) {
-		std::string_view const arg = ci->argv[it];
-		if (arg == "--start-recording" && it + 1 < ci->argc) {
-			std::string_view const val = ci->argv[++ it];
-			if (val == "true") {
-				device.isRecording = true;
-				device.isRecordingFirstFrame = true;
-				device.paused = false;
-				device.recordingFile = (
-					SnortFs::replayRecorder_open(
-						device.recordingFilepath.c_str(),
-						/*commonInterface=*/ device.commonInterface,
-						/*instructionOffset=*/ device.instructionCount,
-						/*regionCount=*/ device.currentMemoryRegion.size(),
-						/*regionCreateInfo=*/ (
-							device.memoryRegionCreateInfo.data()
-						)
-					)
-				);
-			}
-		}
-		else if (
-			arg == "--target-instruction-count" && it + 1 < ci->argc
-		) {
-			device.targetInstructionCount = std::stoi(ci->argv[++ it]);
-		}
-		else if (
-			arg == "--close-once-done-recording" && it + 1 < ci->argc
-		) {
-			std::string_view const val = ci->argv[++ it];
-			if (val == "true") {
-				device.closeOnceDoneRecording = true;
-			}
-		}
-	}
+	parseCommandLineArgs(device, ci);
 
 	return SnortDevice {
 		.handle = (u64)(uintptr_t)(new snort::Device(std::move(device)))

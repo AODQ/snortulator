@@ -82,7 +82,7 @@ enum SnortCommonInterface {
 
 struct SnortDeviceCreateInfo {
 	char const * name;
-	int32_t argc;
+	i32 argc;
 	char const * const * argv;
 	char const * recordingFilepath;
 	SnortCommonInterface commonInterface;

@@ -5,7 +5,9 @@
 SnortDevice snort_deviceCreateFromCommon(
 	SnortCommonInterface const type,
 	char const * const customLabel,
-	char const * const romPath
+	char const * const romPath,
+	i32 const argc,
+	char const * const * const argv
 ) {
 	// get the filepath from rompath. Get just the filename from the path,
 	//   remove the extension, replace non-alphanumeric characters with dashes,
@@ -82,7 +84,8 @@ SnortDevice snort_deviceCreateFromCommon(
 			);
 			auto ci = SnortDeviceCreateInfo {
 				.name = customLabel != nullptr ? customLabel : "chip8",
-				.configPath = "configs/chip8.toml",
+				.argc = argc,
+				.argv = argv,
 				.recordingFilepath = recordingFilepath.c_str(),
 				.commonInterface = kSnortCommonInterface_chip8,
 				.memoryRegionCount = 7u,

@@ -20,7 +20,9 @@ int32_t main(int32_t const argc, char const * const argv[]) {
 		snort_deviceCreateFromCommon(
 			kSnortCommonInterface_chip8,
 			"snort-chip8",
-			argv[1]
+			argv[1],
+			argc,
+			argv
 		)
 	);
 	ImGui::GetIO().IniFilename = "imgui-chip8.ini";

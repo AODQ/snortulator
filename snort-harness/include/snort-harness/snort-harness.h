@@ -15,7 +15,9 @@ struct SnortDevice { u64 handle; };
 SnortDevice snort_deviceCreateFromCommon(
 	SnortCommonInterface const type,
 	char const * const customLabel,
-	char const * const romPath
+	char const * const romPath,
+	i32 const argc,
+	char const * const * const argv
 );
 
 // -----------------------------------------------------------------------------

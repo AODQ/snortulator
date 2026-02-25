@@ -39,7 +39,13 @@ uint8_t keymap[16] = {
 int main(int argc, char **argv) {
 #if SnortInsert
 	SnortDevice snortDevice = (
-		snort_deviceCreateFromCommon(kSnortCommonInterface_chip8)
+		snort_deviceCreateFromCommon(
+			kSnortCommonInterface_chip8,
+			"griffin",
+			argc >= 2 ? argv[1] : "",
+			argc,
+			(char const * const *)argv
+		)
 	);
 	ImGui::GetIO().IniFilename = "imgui-chip8.ini";
 #endif

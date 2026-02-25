@@ -1,6 +1,6 @@
 #include "device.hpp"
 
-#include "tomlplusplus.hpp"
+#include "cxxopts.hpp"
 
 #include <ctime>
 #include <snort/snort-ui.h>
@@ -79,6 +79,63 @@ void storeFrameDelta(
 
 // --
 
+namespace {
+
+void parseCommandLineArgs(
+	snort::Device & device,
+	SnortDeviceCreateInfo const * const ci
+) {
+	cxxopts::Options options("snort-harness");
+	options.add_options()
+		(
+			"start-recording",
+			"start recording immediately",
+			cxxopts::value<bool>()->default_value("false")
+		)
+		(
+			"target-instruction-count",
+			"number of instructions to record",
+			cxxopts::value<i32>()->default_value("10")
+		)
+		(
+			"close-once-done-recording",
+			"close emulator once recording finishes",
+			cxxopts::value<bool>()->default_value("false")
+		)
+	;
+	options.allow_unrecognised_options();
+
+	auto const result = (
+		options.parse(ci->argc, ci->argv)
+	);
+
+	device.targetInstructionCount = (
+		result["target-instruction-count"].as<i32>()
+	);
+	device.closeOnceDoneRecording = (
+		result["close-once-done-recording"].as<bool>()
+	);
+
+	if (!result["start-recording"].as<bool>()) { return; }
+
+	device.isRecording = true;
+	device.isRecordingFirstFrame = true;
+	device.paused = false;
+	device.recordingFile = (
+		SnortFs::replayRecorder_open(
+			device.recordingFilepath.c_str(),
+			/*commonInterface=*/ device.commonInterface,
+			/*instructionOffset=*/ device.instructionCount,
+			/*regionCount=*/ device.currentMemoryRegion.size(),
+			/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
+		)
+	);
+}
+
+} // namespace
+
+// --
+
 SnortDevice snort_deviceCreate(
 	SnortDeviceCreateInfo const * const ci
 ) {
@@ -144,30 +201,8 @@ SnortDevice snort_deviceCreate(
 		});
 	}
 
-	// -- load config options
-	if (ci->configPath != nullptr) {
-		toml::table configTable = toml::parse_file(ci->configPath);
-		if (configTable["start-recording"].value_or(false)) {
-			device.isRecording = true;
-			device.isRecordingFirstFrame = true;
-			device.paused = false;
-			device.recordingFile = (
-				SnortFs::replayRecorder_open(
-					device.recordingFilepath.c_str(),
-					/*commonInterface=*/ device.commonInterface,
-					/*instructionOffset=*/ device.instructionCount,
-					/*regionCount=*/ device.currentMemoryRegion.size(),
-					/*regionCreateInfo=*/ device.memoryRegionCreateInfo.data()
-				)
-			);
-		}
-		if (configTable["close-once-done-recording"].value_or(false)) {
-			device.closeOnceDoneRecording = true;
-		}
-		device.targetInstructionCount = (
-			configTable["target-instruction-count"].value_or(10)
-		);
-	}
+	// -- parse command line args
+	parseCommandLineArgs(device, ci);
 
 	return SnortDevice {
 		.handle = (u64)(uintptr_t)(new snort::Device(std::move(device)))

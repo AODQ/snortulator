@@ -82,7 +82,8 @@ enum SnortCommonInterface {
 
 struct SnortDeviceCreateInfo {
 	char const * name;
-	char const * configPath;
+	int32_t argc;
+	char const * const * argv;
 	char const * recordingFilepath;
 	SnortCommonInterface commonInterface;
 	size_t memoryRegionCount;
